@@ -53,9 +53,15 @@ function App() {
   };
 
   const playResponse = async () => {
+    if (!gptResponse) return;
+    
     try {
       setIsPlaying(true);
-      const response = await axios.get(`http://localhost:8000/speak/${encodeURIComponent(gptResponse)}`, {
+      setError('');
+      
+      const response = await axios({
+        method: 'get',
+        url: `http://localhost:8000/speak/${encodeURIComponent(gptResponse)}`,
         responseType: 'blob'
       });
       
@@ -64,16 +70,23 @@ function App() {
       
       if (audioRef.current) {
         audioRef.current.src = audioUrl;
-        await audioRef.current.play();
         audioRef.current.onended = () => {
           setIsPlaying(false);
           URL.revokeObjectURL(audioUrl);
         };
+        
+        try {
+          await audioRef.current.play();
+        } catch (playError) {
+          setError('Failed to play audio. Please try again.');
+          setIsPlaying(false);
+          URL.revokeObjectURL(audioUrl);
+        }
       }
     } catch (err) {
-      setError('Failed to play audio response');
-      console.error(err);
+      setError('Failed to generate speech. Please try again.');
       setIsPlaying(false);
+      console.error(err);
     }
   };
 
@@ -232,7 +245,7 @@ function App() {
           </form>
         </div>
       </div>
-      <audio ref={audioRef} className="hidden" onEnded={() => setIsPlaying(false)} />
+      <audio ref={audioRef} className="hidden" />
     </div>
   );
 }
