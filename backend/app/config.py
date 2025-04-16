@@ -13,3 +13,10 @@ WHISPER_OPTIONS = {
     "temperature": 0.0,
     "response_format": "text"
 }
+
+# TTS Configuration
+TTS_OPTIONS = {
+    "model": "tts-1",
+    "voice": "alloy",
+    "speed": 1.0
+}

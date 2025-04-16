@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Mic, AlertCircle, StopCircle } from 'lucide-react';
+import { Mic, AlertCircle, StopCircle, Volume2 } from 'lucide-react';
 import axios from 'axios';
 
 function App() {
@@ -9,8 +9,10 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [isRecording, setIsRecording] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const startRecording = async () => {
     try {
@@ -31,7 +33,6 @@ function App() {
         const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
         const audioFile = new File([audioBlob], 'recording.webm', { type: 'audio/webm' });
         setFile(audioFile);
-        // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -48,6 +49,31 @@ function App() {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+    }
+  };
+
+  const playResponse = async () => {
+    try {
+      setIsPlaying(true);
+      const response = await axios.get(`http://localhost:8000/speak/${encodeURIComponent(gptResponse)}`, {
+        responseType: 'blob'
+      });
+      
+      const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
+      const audioUrl = URL.createObjectURL(audioBlob);
+      
+      if (audioRef.current) {
+        audioRef.current.src = audioUrl;
+        await audioRef.current.play();
+        audioRef.current.onended = () => {
+          setIsPlaying(false);
+          URL.revokeObjectURL(audioUrl);
+        };
+      }
+    } catch (err) {
+      setError('Failed to play audio response');
+      console.error(err);
+      setIsPlaying(false);
     }
   };
 
@@ -175,9 +201,24 @@ function App() {
                   
                   {gptResponse && (
                     <div>
-                      <h2 className="text-lg font-medium text-gray-900 mb-4">
-                        AI Response
-                      </h2>
+                      <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-lg font-medium text-gray-900">
+                          AI Response
+                        </h2>
+                        <button
+                          type="button"
+                          onClick={playResponse}
+                          disabled={isPlaying}
+                          className={`flex items-center px-3 py-2 rounded-md text-sm font-medium ${
+                            isPlaying
+                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                              : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                          }`}
+                        >
+                          <Volume2 className="w-4 h-4 mr-2" />
+                          {isPlaying ? 'Playing...' : 'Play Response'}
+                        </button>
+                      </div>
                       <div className="bg-blue-50 p-4 rounded-md">
                         <p className="text-gray-700 whitespace-pre-wrap">
                           {gptResponse}
@@ -191,6 +232,7 @@ function App() {
           </form>
         </div>
       </div>
+      <audio ref={audioRef} className="hidden" onEnded={() => setIsPlaying(false)} />
     </div>
   );
 }
