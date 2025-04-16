@@ -1,13 +1,10 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, WebSocket
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
-import wave
 import tempfile
 from pathlib import Path
-import numpy as np
 from openai import OpenAI
-from ..config import OPENAI_API_KEY, RATE, CHANNELS, WHISPER_OPTIONS
+from ..config import OPENAI_API_KEY, WHISPER_OPTIONS
 from ..nlp import NLPProcessor
-from .audio import AudioBuffer
 import logging
 
 # Configure logging
@@ -26,7 +23,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
     logger.info(f"Received file: {file.filename} ({file.content_type})")
     
     try:
-        # Create temporary WAV file
+        # Create temporary file
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
             try:
                 # Save uploaded file
@@ -46,7 +43,6 @@ async def transcribe_audio(file: UploadFile = File(...)):
                             **WHISPER_OPTIONS
                         )
                         
-                        # The transcription is now returned directly as a string
                         result = transcription.strip() if isinstance(transcription, str) else transcription.text.strip()
                         logger.info(f"Transcription successful: {result}")
                         
@@ -60,92 +56,12 @@ async def transcribe_audio(file: UploadFile = File(...)):
                         })
                     except Exception as e:
                         logger.error(f"OpenAI transcription error: {str(e)}")
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"Transcription failed: {str(e)}"
-                        )
-            except Exception as e:
-                logger.error(f"File processing error: {str(e)}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"File processing failed: {str(e)}"
-                )
+                        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
             finally:
                 try:
-                    # Make sure the file handle is closed before attempting to delete
                     temp_file.close()
                     Path(temp_file.name).unlink()
                 except Exception as e:
                     logger.error(f"Failed to delete temporary file: {str(e)}")
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"An unexpected error occurred: {str(e)}"
-        )
     finally:
         await file.close()
-
-@router.websocket("/transcribe/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    audio_buffer = AudioBuffer([])
-    
-    try:
-        while True:
-            data = await websocket.receive_bytes()
-            
-            # Convert bytes to numpy array
-            audio_chunk = np.frombuffer(data, dtype=np.float32)
-            
-            # Add samples and check if we should process
-            if audio_buffer.add_samples(audio_chunk):
-                audio_data = audio_buffer.get_audio_data()
-                
-                # Create temporary WAV file
-                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                    with wave.open(temp_file.name, 'wb') as wav_file:
-                        wav_file.setnchannels(CHANNELS)
-                        wav_file.setsampwidth(2)  # 16-bit audio
-                        wav_file.setframerate(RATE)
-                        wav_file.writeframes((audio_data * 32767).astype(np.int16).tobytes())
-                    
-                    # Transcribe with OpenAI
-                    with open(temp_file.name, 'rb') as audio_file:
-                        transcription = client.audio.transcriptions.create(
-                            file=audio_file,
-                            **WHISPER_OPTIONS
-                        )
-                        
-                        # Handle both string and object responses
-                        result = transcription.strip() if isinstance(transcription, str) else transcription.text.strip()
-                        
-                        # Process with GPT if we have a transcription
-                        if result:
-                            gpt_response = await nlp_processor.process_text(result)
-                            
-                            # Send both transcription and GPT response to client
-                            await websocket.send_json({
-                                "type": "transcription",
-                                "text": result,
-                                "response": gpt_response
-                            })
-                    
-                    # Clean up temp file
-                    temp_file.close()
-                    Path(temp_file.name).unlink()
-            
-            # Send audio level for visualization
-            rms = np.sqrt(np.mean(np.square(audio_chunk)))
-            await websocket.send_json({
-                "type": "audio_level",
-                "level": float(rms)
-            })
-                
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-    finally:
-        try:
-            await websocket.close()
-        except:
-            pass
