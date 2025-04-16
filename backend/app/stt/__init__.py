@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 from openai import OpenAI
 from ..config import OPENAI_API_KEY, RATE, CHANNELS, WHISPER_OPTIONS
+from ..nlp import NLPProcessor
 from .audio import AudioBuffer
 import logging
 
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 client = OpenAI(api_key=OPENAI_API_KEY)
+nlp_processor = NLPProcessor()
 
 @router.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
@@ -48,7 +50,14 @@ async def transcribe_audio(file: UploadFile = File(...)):
                         result = transcription.strip() if isinstance(transcription, str) else transcription.text.strip()
                         logger.info(f"Transcription successful: {result}")
                         
-                        return JSONResponse(content={"transcription": result})
+                        # Process transcription with GPT
+                        gpt_response = await nlp_processor.process_text(result)
+                        logger.info(f"GPT response: {gpt_response}")
+                        
+                        return JSONResponse(content={
+                            "transcription": result,
+                            "response": gpt_response
+                        })
                     except Exception as e:
                         logger.error(f"OpenAI transcription error: {str(e)}")
                         raise HTTPException(
@@ -110,16 +119,21 @@ async def websocket_endpoint(websocket: WebSocket):
                         
                         # Handle both string and object responses
                         result = transcription.strip() if isinstance(transcription, str) else transcription.text.strip()
+                        
+                        # Process with GPT if we have a transcription
+                        if result:
+                            gpt_response = await nlp_processor.process_text(result)
+                            
+                            # Send both transcription and GPT response to client
+                            await websocket.send_json({
+                                "type": "transcription",
+                                "text": result,
+                                "response": gpt_response
+                            })
                     
                     # Clean up temp file
                     temp_file.close()
                     Path(temp_file.name).unlink()
-                    
-                    # Send transcription back to client
-                    await websocket.send_json({
-                        "type": "transcription",
-                        "text": result
-                    })
             
             # Send audio level for visualization
             rms = np.sqrt(np.mean(np.square(audio_chunk)))

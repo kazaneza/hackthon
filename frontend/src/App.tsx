@@ -5,6 +5,7 @@ import axios from 'axios';
 function App() {
   const [file, setFile] = useState<File | null>(null);
   const [transcription, setTranscription] = useState<string>('');
+  const [gptResponse, setGptResponse] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [isRecording, setIsRecording] = useState(false);
@@ -64,14 +65,15 @@ function App() {
     formData.append('file', file);
 
     try {
-      const response = await axios.post('http://localhost:8000/transcribe/', formData, {
+      const response = await axios.post('http://localhost:8000/transcribe', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
       setTranscription(response.data.transcription);
+      setGptResponse(response.data.response);
     } catch (err) {
-      setError('Failed to transcribe recording. Please try again.');
+      setError('Failed to process recording. Please try again.');
       console.error(err);
     } finally {
       setLoading(false);
@@ -83,10 +85,10 @@ function App() {
       <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-900 sm:text-4xl">
-            Voice to Text Transcription
+            Voice to Text with AI Response
           </h1>
           <p className="mt-3 text-xl text-gray-500 sm:mt-4">
-            Record your voice and get instant transcription
+            Record your voice and get instant transcription with AI-powered responses
           </p>
         </div>
 
@@ -151,21 +153,38 @@ function App() {
                         : 'bg-blue-600 hover:bg-blue-700'
                     }`}
                   >
-                    {loading ? 'Transcribing...' : 'Transcribe Recording'}
+                    {loading ? 'Processing...' : 'Process Recording'}
                   </button>
                 </div>
               </div>
 
-              {transcription && (
-                <div className="bg-white p-8 rounded-lg shadow">
-                  <h2 className="text-lg font-medium text-gray-900 mb-4">
-                    Transcription Result
-                  </h2>
-                  <div className="bg-gray-50 p-4 rounded-md">
-                    <p className="text-gray-700 whitespace-pre-wrap">
-                      {transcription}
-                    </p>
-                  </div>
+              {(transcription || gptResponse) && (
+                <div className="bg-white p-8 rounded-lg shadow space-y-6">
+                  {transcription && (
+                    <div>
+                      <h2 className="text-lg font-medium text-gray-900 mb-4">
+                        Transcription
+                      </h2>
+                      <div className="bg-gray-50 p-4 rounded-md">
+                        <p className="text-gray-700 whitespace-pre-wrap">
+                          {transcription}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {gptResponse && (
+                    <div>
+                      <h2 className="text-lg font-medium text-gray-900 mb-4">
+                        AI Response
+                      </h2>
+                      <div className="bg-blue-50 p-4 rounded-md">
+                        <p className="text-gray-700 whitespace-pre-wrap">
+                          {gptResponse}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
