@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 # GPT Configuration
 GPT_OPTIONS = {
-    "model": "gpt-4-turbo-preview",
+    "model": "gpt-4o-mini",
     "temperature": 0.7,
     "max_tokens": 150
 }

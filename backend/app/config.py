@@ -8,7 +8,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Whisper Configuration
 WHISPER_OPTIONS = {
-    "model": "gpt-4o-transcribe",
+    "model": "whisper-1",
     "language": "en",
     "temperature": 0.0,
     "response_format": "text"

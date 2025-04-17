@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Mic, AlertCircle, Volume2 } from 'lucide-react';
+import { Mic, AlertCircle, Volume2, Building2, Sparkles, MessageSquare, Bot } from 'lucide-react';
 import axios from 'axios';
 
 function App() {
@@ -49,7 +49,6 @@ function App() {
           const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
           const audioFile = new File([audioBlob], 'recording.webm', { type: 'audio/webm' });
           
-          // Clean up the stream
           if (streamRef.current) {
             streamRef.current.getTracks().forEach(track => track.stop());
           }
@@ -67,8 +66,6 @@ function App() {
 
             setTranscription(response.data.transcription);
             setGptResponse(response.data.response);
-            
-            // Automatically play the response
             playResponse(response.data.response);
           } catch (err) {
             setError('Failed to process recording. Please try again.');
@@ -104,13 +101,11 @@ function App() {
       if (audioRef.current) {
         audioRef.current.src = audioUrl;
         
-        // Split response into words for subtitle animation
         const words = text.split(' ');
         let wordIndex = 0;
         
         audioRef.current.ontimeupdate = () => {
           if (audioRef.current) {
-            // Roughly estimate word timing based on audio duration
             const wordsPerSecond = words.length / audioRef.current.duration;
             const currentWordIndex = Math.floor(audioRef.current.currentTime * wordsPerSecond);
             
@@ -143,67 +138,95 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold text-gray-900 sm:text-4xl">
-            Voice Chat with AI
-          </h1>
-          <p className="mt-3 text-xl text-gray-500 sm:mt-4">
-            Press and hold to speak with the AI assistant
+    <div className="min-h-screen bg-gradient-radial from-bk-light via-bk-gray to-bk-gray/50">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-bk-blue to-bk-accent">
+        <div className="max-w-6xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="bg-white p-2 rounded-lg shadow-lg">
+                <Building2 className="w-8 h-8 text-bk-blue" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white">
+                  Bank of Kigali
+                </h1>
+                <p className="text-blue-100 text-sm">Meet Alice, Your AI Assistant</p>
+              </div>
+            </div>
+            <div className="hidden sm:flex items-center space-x-2 bg-white/10 px-4 py-2 rounded-full text-white text-sm">
+              <Bot className="w-4 h-4" />
+              <span>Alice AI</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="max-w-6xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-12">
+          <h2 className="text-3xl font-bold text-bk-dark mb-4">
+            Hi, I'm Alice 👋
+          </h2>
+          <p className="text-lg text-bk-dark/60 max-w-2xl mx-auto">
+            I'm your personal banking assistant. Ask me about accounts, transfers, loans, or any banking service. Press and hold the microphone to speak with me.
           </p>
         </div>
 
-        <div className="mt-12">
-          <div className="space-y-6">
-            <div className="bg-white p-8 rounded-lg shadow">
-              <div className="flex flex-col items-center justify-center">
-                <div className="mb-6 text-center">
-                  <button
-                    onMouseDown={startRecording}
-                    onMouseUp={stopRecording}
-                    onMouseLeave={stopRecording}
-                    onTouchStart={startRecording}
-                    onTouchEnd={stopRecording}
-                    disabled={loading}
-                    className={`flex items-center justify-center h-24 w-24 rounded-full transition-all duration-200 ${
-                      isRecording
-                        ? 'bg-red-100 scale-110'
-                        : loading
-                        ? 'bg-gray-100 cursor-not-allowed'
-                        : 'bg-blue-100 hover:bg-blue-200'
-                    }`}
-                  >
-                    <Mic className={`w-12 h-12 ${
-                      isRecording
-                        ? 'text-red-600'
-                        : loading
-                        ? 'text-gray-400'
-                        : 'text-blue-600'
-                    }`} />
-                  </button>
-                  <p className="mt-4 text-sm text-gray-500">
-                    {loading ? 'Processing...' : isRecording ? 'Recording...' : 'Press and hold to speak'}
-                  </p>
-                </div>
-
-                {error && (
-                  <div className="mt-4 flex items-center justify-center text-red-600">
-                    <AlertCircle className="w-5 h-5 mr-2" />
-                    <span>{error}</span>
-                  </div>
-                )}
+        <div className="grid gap-8 md:grid-cols-[1fr,2fr]">
+          <div className="bg-white rounded-2xl shadow-xl border border-bk-blue/5 p-8 flex flex-col items-center justify-center relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-radial from-transparent to-bk-gray/5"></div>
+            <div className="relative z-10">
+              <div className="mb-8 text-center">
+                <button
+                  onMouseDown={startRecording}
+                  onMouseUp={stopRecording}
+                  onMouseLeave={stopRecording}
+                  onTouchStart={startRecording}
+                  onTouchEnd={stopRecording}
+                  disabled={loading}
+                  className={`group relative flex items-center justify-center h-32 w-32 rounded-full transition-all duration-500 ${
+                    isRecording
+                      ? 'bg-red-500 scale-110 shadow-lg shadow-red-500/20'
+                      : loading
+                      ? 'bg-bk-gray cursor-not-allowed'
+                      : 'bg-bk-blue hover:bg-bk-accent hover:scale-105 shadow-lg shadow-bk-blue/20'
+                  }`}
+                >
+                  <div className={`absolute inset-0 rounded-full ${isRecording ? 'animate-pulse-slow bg-red-400/20' : 'group-hover:animate-pulse-slow bg-bk-accent/20'}`}></div>
+                  <Mic className={`w-12 h-12 ${
+                    isRecording
+                      ? 'text-white'
+                      : loading
+                      ? 'text-gray-400'
+                      : 'text-white'
+                  }`} />
+                </button>
+                <p className="mt-6 text-sm font-medium text-bk-dark/60">
+                  {loading ? 'Processing...' : isRecording ? 'I\'m listening...' : 'Hold to talk with Alice'}
+                </p>
               </div>
-            </div>
 
-            {isPlaying && (
-              <div className="bg-white p-8 rounded-lg shadow">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-medium text-gray-900">AI Speaking</h2>
-                  <Volume2 className="w-5 h-5 text-blue-600 animate-pulse" />
+              {error && (
+                <div className="mt-4 flex items-center justify-center text-red-600 bg-red-50 p-4 rounded-xl">
+                  <AlertCircle className="w-5 h-5 mr-2 flex-shrink-0" />
+                  <span className="text-sm">{error}</span>
                 </div>
-                <div className="bg-blue-50 p-4 rounded-md">
-                  <p className="text-gray-700 whitespace-pre-wrap">
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {isPlaying && (
+              <div className="bg-white rounded-2xl shadow-xl border border-bk-blue/5 p-8">
+                <div className="flex items-center space-x-3 mb-6">
+                  <div className="bg-blue-100 p-2 rounded-lg">
+                    <Volume2 className="w-5 h-5 text-bk-blue animate-pulse" />
+                  </div>
+                  <h2 className="text-xl font-semibold text-bk-dark">Alice is speaking</h2>
+                </div>
+                <div className="bg-gradient-to-r from-bk-gray to-bk-gray/50 p-6 rounded-xl">
+                  <p className="text-bk-dark text-lg leading-relaxed">
                     {currentSubtitle}
                   </p>
                 </div>
@@ -211,25 +234,31 @@ function App() {
             )}
 
             {(transcription || gptResponse) && !isPlaying && (
-              <div className="bg-white p-8 rounded-lg shadow space-y-6">
+              <div className="space-y-6">
                 {transcription && (
-                  <div>
-                    <h2 className="text-lg font-medium text-gray-900 mb-4">
-                      You Said
-                    </h2>
-                    <div className="bg-gray-50 p-4 rounded-md">
-                      <p className="text-gray-700">{transcription}</p>
+                  <div className="bg-white rounded-2xl shadow-xl border border-bk-blue/5 p-8">
+                    <div className="flex items-center space-x-3 mb-6">
+                      <div className="bg-blue-100 p-2 rounded-lg">
+                        <MessageSquare className="w-5 h-5 text-bk-blue" />
+                      </div>
+                      <h2 className="text-xl font-semibold text-bk-dark">You Said</h2>
+                    </div>
+                    <div className="bg-gradient-to-r from-bk-gray to-bk-gray/50 p-6 rounded-xl">
+                      <p className="text-bk-dark text-lg leading-relaxed">{transcription}</p>
                     </div>
                   </div>
                 )}
                 
                 {gptResponse && (
-                  <div>
-                    <h2 className="text-lg font-medium text-gray-900 mb-4">
-                      AI Response
-                    </h2>
-                    <div className="bg-blue-50 p-4 rounded-md">
-                      <p className="text-gray-700">{gptResponse}</p>
+                  <div className="bg-white rounded-2xl shadow-xl border border-bk-blue/5 p-8">
+                    <div className="flex items-center space-x-3 mb-6">
+                      <div className="bg-blue-100 p-2 rounded-lg">
+                        <Bot className="w-5 h-5 text-bk-blue" />
+                      </div>
+                      <h2 className="text-xl font-semibold text-bk-dark">Alice's Response</h2>
+                    </div>
+                    <div className="bg-gradient-to-r from-bk-gray to-bk-gray/50 p-6 rounded-xl">
+                      <p className="text-bk-dark text-lg leading-relaxed">{gptResponse}</p>
                     </div>
                   </div>
                 )}
