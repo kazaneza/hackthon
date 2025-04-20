@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Mic, AlertCircle, Volume2, Building2, Sparkles, MessageSquare, Bot } from 'lucide-react';
+import { Mic, AlertCircle, Volume2, Building2, Bot, MessageSquare, StopCircle } from 'lucide-react';
 import axios from 'axios';
 
 function App() {
@@ -81,6 +81,15 @@ function App() {
       }
     });
   }, [isRecording]);
+
+  const stopPlaying = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setIsPlaying(false);
+      setCurrentSubtitle('');
+    }
+  };
 
   const playResponse = async (text: string) => {
     if (!text) return;
@@ -219,11 +228,19 @@ function App() {
           <div className="space-y-6">
             {isPlaying && (
               <div className="bg-white rounded-2xl shadow-xl border border-bk-blue/5 p-8">
-                <div className="flex items-center space-x-3 mb-6">
-                  <div className="bg-blue-100 p-2 rounded-lg">
-                    <Volume2 className="w-5 h-5 text-bk-blue animate-pulse" />
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center space-x-3">
+                    <div className="bg-blue-100 p-2 rounded-lg">
+                      <Volume2 className="w-5 h-5 text-bk-blue animate-pulse" />
+                    </div>
+                    <h2 className="text-xl font-semibold text-bk-dark">Alice is speaking</h2>
                   </div>
-                  <h2 className="text-xl font-semibold text-bk-dark">Alice is speaking</h2>
+                  <button
+                    onClick={stopPlaying}
+                    className="bg-red-100 p-2 rounded-lg hover:bg-red-200 transition-colors"
+                  >
+                    <StopCircle className="w-5 h-5 text-red-600" />
+                  </button>
                 </div>
                 <div className="bg-gradient-to-r from-bk-gray to-bk-gray/50 p-6 rounded-xl">
                   <p className="text-bk-dark text-lg leading-relaxed">
