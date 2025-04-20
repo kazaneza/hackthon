@@ -1,0 +1,47 @@
+{
+  "72935181-2dc3-40d7-bce9-8c3a62590c1c": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello, how are you?"
+      },
+      {
+        "role": "assistant",
+        "content": "Hello! I'm here and ready to assist you. How can I help you today?"
+      }
+    ],
+    "account_number": null,
+    "last_intent": null,
+    "last_interaction": "2025-04-20T22:50:06.507847Z"
+  },
+  "f8493632-5fa1-4ef9-a98f-c95ff61cd316": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "I want to know my bank account."
+      },
+      {
+        "role": "assistant",
+        "content": "Of course! Could you please provide me with your account number so I can assist you with your balance inquiry?"
+      }
+    ],
+    "account_number": null,
+    "last_intent": null,
+    "last_interaction": "2025-04-20T22:50:22.208206Z"
+  },
+  "90ba40cb-19c6-460c-8cc7-af9d90f7b19a": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "The text may contain account numbers in format XXXXX-XXXXXX or XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+      },
+      {
+        "role": "assistant",
+        "content": "Of course, I'm here to help with your banking needs. If you have a specific query or need information on your account, feel free to let me know!"
+      }
+    ],
+    "account_number": null,
+    "last_intent": null,
+    "last_interaction": "2025-04-20T22:50:52.959548Z"
+  }
+}
