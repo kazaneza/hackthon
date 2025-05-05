@@ -1,84 +1,128 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Mic, AlertCircle, Volume2, Building2, Bot, MessageSquare, StopCircle } from 'lucide-react';
+import {
+  Mic, AlertCircle, Volume2, Building2,
+  Bot, MessageSquare, StopCircle,
+} from 'lucide-react';
 import axios from 'axios';
 
+/** -------------------------------------------------
+ *  Axios instances for different services
+ * ------------------------------------------------- */
+const api = axios.create({ baseURL: 'http://localhost:8000' });
+const nlpApi = axios.create({ baseURL: 'http://localhost:8888' });
+let sessionId: string | null = null;
+
+api.interceptors.response.use((resp) => {
+  const sid = resp.headers['x-session-id'] ?? resp.headers['X-Session-ID'];
+  if (sid) sessionId = sid;
+  return resp;
+});
+
+api.interceptors.request.use((cfg) => {
+  if (sessionId) cfg.headers['X-Session-ID'] = sessionId;
+  return cfg;
+});
+
+interface Transaction {
+  date: string;
+  description: string;
+  amount: number;
+  balance: number;
+  reference?: string;
+}
+
+interface APIResponse {
+  transcription?: string;
+  response?: string;
+  transactions?: Transaction[];
+  session_id?: string;
+}
+
 function App() {
-  const [transcription, setTranscription] = useState<string>('');
-  const [gptResponse, setGptResponse] = useState<string>('');
+  const [transcription, setTranscription] = useState('');
+  const [gptResponse, setGptResponse] = useState('');
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>('');
+  const [error, setError] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentSubtitle, setCurrentSubtitle] = useState<string>('');
+  const [currentSubtitle, setCurrentSubtitle] = useState('');
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  const processWithNLP = async (text: string) => {
+    try {
+      const { data } = await nlpApi.post('/chat', {
+        messages: [{ role: 'user', content: text }],
+        service_category: 'general'
+      });
+      
+      return data.response || data.message;
+    } catch (err) {
+      console.error('NLP processing error:', err);
+      throw err;
+    }
+  };
+
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm'
-      });
-      mediaRecorderRef.current = mediaRecorder;
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorderRef.current = recorder;
       chunksRef.current = [];
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.start();
+      recorder.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
+      recorder.start();
       setIsRecording(true);
       setError('');
     } catch (err) {
-      setError('Failed to access microphone. Please ensure microphone permissions are granted.');
+      setError('Microphone access denied. Please allow microphone.');
       console.error(err);
     }
   }, []);
 
   const stopRecording = useCallback(async () => {
     if (!mediaRecorderRef.current || !isRecording) return;
-
     return new Promise<void>((resolve) => {
-      if (mediaRecorderRef.current) {
-        mediaRecorderRef.current.onstop = async () => {
-          const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
-          const audioFile = new File([audioBlob], 'recording.webm', { type: 'audio/webm' });
+      mediaRecorderRef.current!.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const file = new File([blob], 'recording.webm', { type: 'audio/webm' });
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+
+        try {
+          setLoading(true);
+          const fd = new FormData();
+          fd.append('file', file);
           
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
+          // First get transcription
+          const { data: transcriptionData } = await api.post<APIResponse>('/transcribe', fd);
+          setTranscription(transcriptionData.transcription || '');
+          
+          // Then process with NLP
+          if (transcriptionData.transcription) {
+            const nlpResponse = await processWithNLP(transcriptionData.transcription);
+            setGptResponse(nlpResponse);
+            playResponse(nlpResponse);
           }
 
-          try {
-            setLoading(true);
-            const formData = new FormData();
-            formData.append('file', audioFile);
-
-            const response = await axios.post('http://localhost:8000/transcribe', formData, {
-              headers: {
-                'Content-Type': 'multipart/form-data',
-              },
-            });
-
-            setTranscription(response.data.transcription);
-            setGptResponse(response.data.response);
-            playResponse(response.data.response);
-          } catch (err) {
-            setError('Failed to process recording. Please try again.');
-            console.error(err);
-          } finally {
-            setLoading(false);
-            resolve();
+          // Set transactions if available
+          if (transcriptionData.transactions) {
+            setTransactions(transcriptionData.transactions);
           }
-        };
-
-        mediaRecorderRef.current.stop();
-        setIsRecording(false);
-      }
+        } catch (err) {
+          setError('Failed to process recording.');
+          console.error(err);
+        } finally {
+          setLoading(false);
+          resolve();
+        }
+      };
+      mediaRecorderRef.current!.stop();
+      setIsRecording(false);
     });
   }, [isRecording]);
 
@@ -93,54 +137,33 @@ function App() {
 
   const playResponse = async (text: string) => {
     if (!text) return;
-    
     try {
       setIsPlaying(true);
       setError('');
+      const { data } = await api.get(`/speak/${encodeURIComponent(text)}`, { responseType: 'blob' });
+      const url = URL.createObjectURL(new Blob([data], { type: 'audio/mpeg' }));
       
-      const response = await axios({
-        method: 'get',
-        url: `http://localhost:8000/speak/${encodeURIComponent(text)}`,
-        responseType: 'blob'
-      });
-      
-      const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
-      const audioUrl = URL.createObjectURL(audioBlob);
-      
-      if (audioRef.current) {
-        audioRef.current.src = audioUrl;
-        
-        const words = text.split(' ');
-        let wordIndex = 0;
-        
-        audioRef.current.ontimeupdate = () => {
-          if (audioRef.current) {
-            const wordsPerSecond = words.length / audioRef.current.duration;
-            const currentWordIndex = Math.floor(audioRef.current.currentTime * wordsPerSecond);
-            
-            if (currentWordIndex !== wordIndex && currentWordIndex < words.length) {
-              wordIndex = currentWordIndex;
-              setCurrentSubtitle(words.slice(0, currentWordIndex + 1).join(' '));
-            }
-          }
-        };
-        
-        audioRef.current.onended = () => {
-          setIsPlaying(false);
-          setCurrentSubtitle('');
-          URL.revokeObjectURL(audioUrl);
-        };
-        
-        try {
-          await audioRef.current.play();
-        } catch (playError) {
-          setError('Failed to play audio. Please try again.');
-          setIsPlaying(false);
-          URL.revokeObjectURL(audioUrl);
+      if (!audioRef.current) return;
+
+      const words = text.split(' ');
+      let idx = 0;
+      audioRef.current.src = url;
+      audioRef.current.ontimeupdate = () => {
+        const wps = words.length / audioRef.current!.duration;
+        const cur = Math.floor(audioRef.current!.currentTime * wps);
+        if (cur !== idx && cur < words.length) {
+          idx = cur;
+          setCurrentSubtitle(words.slice(0, cur + 1).join(' '));
         }
-      }
+      };
+      audioRef.current.onended = () => {
+        setIsPlaying(false);
+        setCurrentSubtitle('');
+        URL.revokeObjectURL(url);
+      };
+      await audioRef.current.play();
     } catch (err) {
-      setError('Failed to generate speech. Please try again.');
+      setError('Failed to play audio.');
       setIsPlaying(false);
       console.error(err);
     }
@@ -276,6 +299,37 @@ function App() {
                     </div>
                     <div className="bg-gradient-to-r from-bk-gray to-bk-gray/50 p-6 rounded-xl">
                       <p className="text-bk-dark text-lg leading-relaxed">{gptResponse}</p>
+                    </div>
+                  </div>
+                )}
+
+                {transactions.length > 0 && (
+                  <div className="bg-white rounded-2xl shadow-xl border border-bk-blue/5 p-8">
+                    <div className="flex items-center space-x-3 mb-6">
+                      <div className="bg-blue-100 p-2 rounded-lg">
+                        <Bot className="w-5 h-5 text-bk-blue" />
+                      </div>
+                      <h2 className="text-xl font-semibold text-bk-dark">Recent Transactions</h2>
+                    </div>
+                    <div className="space-y-4">
+                      {transactions.map((tx, index) => (
+                        <div key={index} className="bg-gradient-to-r from-bk-gray to-bk-gray/50 p-4 rounded-xl">
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <p className="font-medium text-bk-dark">{tx.description}</p>
+                              <p className="text-sm text-bk-dark/60">{tx.date}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className={`font-medium ${tx.amount < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                {tx.amount < 0 ? '-' : '+'}RWF {Math.abs(tx.amount).toLocaleString()}
+                              </p>
+                              <p className="text-sm text-bk-dark/60">
+                                Balance: RWF {tx.balance.toLocaleString()}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}

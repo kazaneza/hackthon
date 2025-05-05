@@ -1,69 +1,53 @@
-import wave
-import tempfile
+import wave, tempfile, re
 from pathlib import Path
+from typing import Final
+
 import numpy as np
 from openai import OpenAI
-import re
+
 from ..config import (
     OPENAI_API_KEY, RATE, CHANNELS, WHISPER_OPTIONS,
-    ACCOUNT_NUMBER_PATTERNS, NUMBER_WORD_MAP
+    ACCOUNT_NUMBER_PATTERNS, NUMBER_WORD_MAP,
 )
+from .utils import words_to_digits                   # NEW
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client: Final = OpenAI(api_key=OPENAI_API_KEY)
 
 def normalize_numbers(text: str) -> str:
-    """Convert spoken numbers to digits and standardize account number format"""
-    # Convert spoken numbers to digits
-    for word, digit in NUMBER_WORD_MAP.items():
-        text = re.sub(r'\b' + word + r'\b', digit, text.lower())
-    
-    # Find and format account numbers
+    """
+    1. convert spoken words to digits         (“one two” -> “12”)
+    2. format any 12‑digit account as XXXX‑XXX‑XXXX
+    """
+    text = words_to_digits(text.lower())
+
     for pattern in ACCOUNT_NUMBER_PATTERNS:
-        matches = re.finditer(pattern, text)
-        for match in matches:
-            number = match.group()
-            # Remove any existing dashes or spaces
-            clean_number = re.sub(r'[-\s]', '', number)
-            if len(clean_number) == 12:  # Valid account number length
-                # Format as XXXX-XXX-XXXX
-                formatted = f"{clean_number[:4]}-{clean_number[4:7]}-{clean_number[7:]}"
-                text = text.replace(number, formatted)
-    
+        for m in re.finditer(pattern, text):
+            raw = re.sub(r"[-\s]", "", m.group(0))
+            if len(raw) == 12:
+                pretty = f"{raw[:4]}-{raw[4:7]}-{raw[7:]}"
+                text = text.replace(m.group(0), pretty)
     return text
 
-async def transcribe_audio(audio_data: np.ndarray) -> str:
+async def transcribe_audio(audio: np.ndarray) -> str:
     try:
-        # Skip if audio is too quiet
-        if np.max(np.abs(audio_data)) < 0.01:
+        if audio.size == 0 or np.max(np.abs(audio)) < 0.01:
             return ""
-            
-        # Convert float32 audio to int16
-        audio_int16 = (audio_data * 32767).astype(np.int16)
-        
-        # Create temporary WAV file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-            with wave.open(temp_file.name, 'wb') as wav_file:
-                wav_file.setnchannels(CHANNELS)
-                wav_file.setsampwidth(2)  # 16-bit audio
-                wav_file.setframerate(RATE)
-                wav_file.writeframes(audio_int16.tobytes())
-            
-            # Transcribe with OpenAI
-            with open(temp_file.name, 'rb') as audio_file:
-                transcription = client.audio.transcriptions.create(
-                    file=audio_file,
-                    **WHISPER_OPTIONS
-                )
-            
-            # Clean up temp file
-            Path(temp_file.name).unlink()
-            
-            # Process and normalize the transcribed text
-            text = transcription.text.strip()
-            normalized_text = normalize_numbers(text)
-            
-            return normalized_text
-            
-    except Exception as e:
-        print(f"Transcription error: {e}")
+
+        int16 = (audio * 32767).astype(np.int16)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            with wave.open(tmp.name, "wb") as wav:
+                wav.setnchannels(CHANNELS)
+                wav.setsampwidth(2)
+                wav.setframerate(RATE)
+                wav.writeframes(int16.tobytes())
+
+            with open(tmp.name, "rb") as f:
+                result = client.audio.transcriptions.create(file=f, **WHISPER_OPTIONS)
+
+        Path(tmp.name).unlink(missing_ok=True)
+        return normalize_numbers(result.text.strip())
+
+    except Exception as exc:
+        print(f"[transcriber] error: {exc}")
         return ""
