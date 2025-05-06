@@ -1,3 +1,4 @@
 .env
 ../backend/.env
 ../backend/conversation_store.json
+__pycache__/

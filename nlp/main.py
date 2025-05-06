@@ -103,8 +103,9 @@ Maintain a warm, professional tone that represents the Bank of Kigali brand."""
 }
 
 # Configuration for OpenAI
+# Configuration for OpenAI
 class OpenAIConfig:
-    model = "gpt-4-turbo"  # Can be adjusted based on needs and availability
+    model = "gpt-4o-mini"  # Changed from "gpt-4-turbo" to "gpt-4o-mini"
     temperature = 0.7
     max_tokens = 500
 
