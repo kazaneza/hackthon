@@ -1,0 +1,329 @@
+# Bank of Kigali PDF Product Search Implementation Guide
+
+This guide explains how to set up and use the product PDF search capability in your Bank of Kigali AI Assistant system, based on LangChain best practices for document Question & Answering systems.
+
+## Directory Structure
+
+First, create a directory structure for your product PDFs:
+
+```
+nlp/
+└── data/
+    └── products/
+        ├── sme/                # SME Banking product PDFs
+        ├── retail/             # Retail Banking product PDFs
+        ├── corporate/          # Corporate Banking product PDFs
+        ├── institutional/      # Institutional Banking product PDFs
+        ├── agribusiness/       # Agribusiness Banking product PDFs
+        └── chroma_db/          # Vector database storage (created automatically)
+```
+
+## Requirements
+
+Add these dependencies to your `requirements.txt`:
+
+```
+# For PDF processing
+pypdf==3.15.1
+unstructured==0.10.8
+pydantic==2.4.2
+
+# For vector embeddings and storage
+chromadb==0.4.13
+openai==1.1.1
+
+# For document processing
+langchain==0.0.335
+langchain-community==0.0.13
+langchain-openai==0.0.2
+python-dotenv==1.0.0
+```
+
+## Integration Steps
+
+### 1. Environment Setup
+
+First, create a `.env` file to store your API key securely:
+
+```
+# .env
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+### 2. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Copy Implementation Files
+
+Create a new file for the document processing system:
+
+```python
+# nlp/core/document_qa.py
+# Paste the code from the "Bank of Kigali PDF-Powered Product Q&A" artifact here
+```
+
+### 4. Create Dependencies in `routes.py`
+
+Add the new dependency to your `routes.py` file:
+
+```python
+# Add to imports
+from core.document_qa import DocumentBasedAIService
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Add dependency
+async def get_document_ai_service():
+    """Dependency to get document-based AI service."""
+    if not settings.OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+    
+    return DocumentBasedAIService(api_key=settings.OPENAI_API_KEY)
+```
+
+### 4. Update Chat Route
+
+Modify your chat endpoint in `routes.py` to use the document-based AI service:
+
+```python
+@router.post("/chat", response_model=ChatResponse)
+async def chat(
+    request: ChatRequest,
+    document_ai_service: DocumentBasedAIService = Depends(get_document_ai_service)
+):
+    try:
+        # Existing code for user_id and message handling
+        # ...
+        
+        # Generate response using document-based AI service
+        result = await document_ai_service.generate_response(
+            service_category=request.service_category,
+            messages=all_messages
+        )
+        
+        # Extract response and sources
+        ai_response = result["response"]
+        sources = result["sources"]
+        
+        # Add document sources to response if available
+        if sources:
+            # Format sources information
+            sources_text = "\n\nThis information comes from the following documents:\n"
+            for i, source in enumerate(sources):
+                sources_text += f"{i+1}. {source['product']} ({source['category'].upper()}) - {source['file']} (Page {source['page']})\n"
+            
+            # Append sources to response
+            ai_response += sources_text
+        
+        # Continue with existing code
+        # ...
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
+```
+
+## Testing and Usage
+
+### 1. Upload Product PDFs
+
+Place your product PDFs in the appropriate directories:
+
+- SME banking PDFs in `data/products/sme/`
+- Retail banking PDFs in `data/products/retail/`
+- Corporate banking PDFs in `data/products/corporate/`
+- Institutional banking PDFs in `data/products/institutional/`
+- Agribusiness banking PDFs in `data/products/agribusiness/`
+
+### 2. File Naming Convention
+
+Name your files descriptively to help with product identification:
+
+```
+sme_loan_application.pdf
+retail_savings_account.pdf
+corporate_treasury_management.pdf
+```
+
+The system will extract product types from filenames by replacing underscores with spaces and capitalizing words.
+
+### 3. Initial Indexing
+
+The first time the system runs, it will:
+
+1. Process all PDFs from the directories
+2. Split them into searchable chunks
+3. Create embeddings for semantic search
+4. Store the embeddings in a vector database
+
+This process can take some time depending on the number and size of your PDFs.
+
+### 4. Subsequent Runs
+
+After the initial indexing, the system will:
+
+1. Load the existing vector database
+2. Respond to queries using the indexed documents
+
+ to the appropriate directories
+2. Delete the `data/products/chroma_db` directory to force reindexing
+3. Restart the application
+
+## How It Works
+
+When a user asks a question:
+
+1. The system determines if it's a product-related question
+2. If yes, it retrieves relevant document sections from the vector database
+3. It uses LangChain and GPT-4o to generate an answer based on the retrieved content
+4. It includes source information (document name, category, page) in the response
+
+## Example Responses
+
+Example of a response with document sources:
+
+```
+To apply for an SME loan at Bank of Kigali, you need to:
+1. Have a registered business with at least 1 year of operation
+2. Provide business financial statements for the last year
+3. Submit a business plan or loan utilization plan
+4. Offer collateral valued at least 120% of the loan amount
+5. Complete the SME loan application form available at any branch
+
+This information comes from the following documents:
+1. SME Loan Application (SME) - sme_loan_application.pdf (Page 3)
+2. Business Financing Options (SME) - business_financing_options.pdf (Page 7)
+```
+
+## Monitoring and Maintenance
+
+Monitor the log files for any issues with document processing or retrieval. Common issues include:
+
+- PDF format problems
+- Embedding creation failures  
+- Vector database connection issues
+- Out of memory errors with large documents
+
+Implement these monitoring practices:
+1. Set up logging for document processing steps
+2. Create health check endpoints to verify vector database connectivity
+3. Implement periodic reindexing to keep information current
+4. Track query performance metrics
+
+## Security Considerations
+
+When working with sensitive banking product information:
+
+1. **Data Storage**: The vector database will contain embeddings and chunks of your PDF content. Ensure this storage location is secure.
+
+2. **API Key Management**: Use environment variables for API keys, never hardcode them.
+
+3. **Access Control**: Implement proper authentication for the API endpoints.
+
+4. **Data Retention**: Establish policies for how long customer queries are stored.
+
+5. **Privacy Compliance**: Ensure the system complies with relevant banking data regulations.
+
+## Troubleshooting Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| PDFs not being indexed | Check file permissions and PDF format compatibility |
+| Out of memory during indexing | Reduce batch size or increase available memory |
+| Slow query response | Optimize chunk size, reduce k parameter, or upgrade hardware |
+| Irrelevant answers | Adjust chunk size, increase overlap, or fine-tune the prompt |
+| Missing information | Check if PDFs are properly formatted with searchable text |
+
+## Extending the System
+
+Consider these enhancements to the basic implementation:
+
+1. **Multi-language Support**: Add support for documents and queries in multiple languages
+
+2. **Document Update Detection**: Automatically detect and reindex updated PDFs
+
+3. **User Feedback Loop**: Collect feedback on responses to improve the system
+
+4. **Integration with CRM**: Connect with customer relationship management for personalized responses
+
+## Complete Testing Process
+
+Follow this step-by-step testing process to verify your implementation:
+
+### 1. Initial Setup Test
+
+```bash
+# Create the required directories
+mkdir -p nlp/data/products/{sme,retail,corporate,institutional,agribusiness}
+
+# Copy sample PDFs to each directory
+cp sample_sme_loan.pdf nlp/data/products/sme/
+cp sample_savings.pdf nlp/data/products/retail/
+
+# Run the application
+cd nlp
+python main.py
+```
+
+### 2. Verify Indexing
+
+Check the logs to ensure:
+- PDFs are being loaded correctly
+- Text is being extracted
+- Documents are being split into chunks
+- Embeddings are being created
+- Vector store is being populated
+
+### 3. Test Simple Queries
+
+Start with basic product questions:
+- "What types of SME loans do you offer?"
+- "Tell me about your savings accounts"
+- "What are the requirements for a corporate account?"
+
+### 4. Test Edge Cases
+
+Try more complex scenarios:
+- Questions spanning multiple product categories
+- Queries with spelling mistakes or informal language
+- Questions about products that don't exist (verify graceful handling)
+
+## Example Implementation Walkthrough
+
+Here's an example of how a typical query flow would work:
+
+1. **Query**: "What are the interest rates for SME loans?"
+
+2. **Processing**:
+   - System identifies this as a product question
+   - Searches vector database for relevant chunks
+   - Retrieves content from "sme_loan_rates.pdf" and related documents
+   - Generates response based on retrieved content
+
+3. **Response**:
+   ```
+   Bank of Kigali offers competitive interest rates for SME loans:
+   - Small Business Loan: 16% p.a.
+   - Medium Enterprise Loan: 14.5% p.a.
+   - Women Entrepreneur Loan: 13% p.a.
+   - Agriculture SME Loan: 12% p.a. (subsidized)
+   
+   All rates are subject to credit assessment and may vary based on loan amount, 
+   tenure, and collateral provided.
+   
+   This information comes from the following documents:
+   1. SME Loan Rates (SME) - sme_loan_rates.pdf (Page 2)
+   2. Business Financing Guide (SME) - business_financing_guide.pdf (Page 5)
+   ```
+
+## Conclusion
+
+This implementation provides a powerful way to help customers find information about Bank of Kigali products by automatically retrieving relevant content from your PDF documentation. The system leverages modern AI technologies to understand queries in natural language and find the most relevant information across your product catalog.
+
+By following this guide, you'll have a fully functional document-based Q&A system integrated with your existing Bank of Kigali AI Assistant. Remember to regularly update your product PDFs and reindex the content to ensure customers always receive the most current information.
+
+For additional assistance or customizations, refer to the LangChain documentation or seek specialized consulting for enterprise-scale deployment.

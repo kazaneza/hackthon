@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # Server settings
     HOST: str = "0.0.0.0"
     PORT: int = int(os.environ.get("PORT", 8888))
-    RELOAD: bool = True
+    RELOAD: bool = False 
     LOG_LEVEL: str = "info"
     
     # CORS settings
