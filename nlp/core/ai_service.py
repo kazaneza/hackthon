@@ -1,81 +1,99 @@
 """
-OpenAI integration service for the Bank of Kigali AI Assistant.
+LangChain integration service for the Bank of Kigali AI Assistant.
 """
 
 from typing import List, Dict, Any
-import openai
+from langchain.chat_models import ChatOpenAI
+from langchain.chains import LLMChain
+from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate
 from config.settings import settings
 from core.prompts import get_system_prompt
 from utils.logging_config import logger
 
-class OpenAIService:
-    """Service for interacting with OpenAI API."""
+class LangChainService:
+    """Service for interacting with LLMs via LangChain."""
     
     def __init__(self, api_key: str = settings.OPENAI_API_KEY):
         """
-        Initialize the OpenAI service.
+        Initialize the LangChain service.
         
         Args:
-            api_key: OpenAI API key
+            api_key: OpenAI API key (or other provider key)
         """
-        self.client = openai.OpenAI(api_key=api_key)
-        self.model = settings.OPENAI_MODEL
-        self.temperature = settings.OPENAI_TEMPERATURE
-        self.max_tokens = settings.OPENAI_MAX_TOKENS
-        
-        logger.info(f"OpenAI service initialized with model {self.model}")
+        self.llm = ChatOpenAI(
+            openai_api_key=api_key,
+            model_name=settings.OPENAI_MODEL,
+            temperature=settings.OPENAI_TEMPERATURE,
+            max_tokens=settings.OPENAI_MAX_TOKENS
+        )
+        logger.info(f"LangChain service initialized with model {settings.OPENAI_MODEL}")
     
-    def prepare_messages(self, service_category: str, messages: List[Any]) -> List[Dict[str, str]]:
+    def prepare_messages(self, service_category: str, messages: List[Any]) -> List[Dict]:
         """
-        Prepare messages for the OpenAI API.
+        Prepare messages for LangChain.
         
         Args:
             service_category: Service category for the prompt
             messages: List of message objects
             
         Returns:
-            Formatted messages for OpenAI API
+            Formatted message history for LangChain
         """
         system_prompt = get_system_prompt(service_category)
         
-        formatted_messages = [{"role": "system", "content": system_prompt}]
+        # Start with the system prompt template
+        messages_for_template = [
+            SystemMessagePromptTemplate.from_template(system_prompt)
+        ]
         
-        # Ensure each message has a valid role before adding
-        valid_roles = ['system', 'assistant', 'user', 'function', 'tool', 'developer']
-        
-        for m in messages:
+        # Extract conversation history
+        human_messages = []
+        for i, m in enumerate(messages):
             if hasattr(m, 'role') and hasattr(m, 'content'):
-                role = m.role if m.role in valid_roles else "user"  # Default to user if invalid
-                formatted_messages.append({"role": role, "content": m.content})
+                if m.role == "user":
+                    human_messages.append(m.content)
         
-        return formatted_messages
+        # If there are human messages, add them to the template
+        if human_messages:
+            human_message = " ".join(human_messages)
+            messages_for_template.append(
+                HumanMessagePromptTemplate.from_template("{input}")
+            )
+            return messages_for_template, {"input": human_message}
+        
+        # Default empty input if no human messages found
+        messages_for_template.append(
+            HumanMessagePromptTemplate.from_template("{input}")
+        )
+        return messages_for_template, {"input": "Hello"}
     
     async def generate_response(self, service_category: str, messages: List[Any]) -> str:
         """
-        Generate a response using the OpenAI API.
+        Generate a response using LangChain.
         
         Args:
             service_category: Service category for the prompt
             messages: List of message objects
             
         Returns:
-            Response from OpenAI
+            Response from the LLM
         """
         try:
-            formatted_messages = self.prepare_messages(service_category, messages)
+            message_templates, input_values = self.prepare_messages(service_category, messages)
             
-            logger.debug(f"Sending request to OpenAI with {len(messages)} messages")
+            # Create a chat prompt template
+            chat_prompt = ChatPromptTemplate.from_messages(message_templates)
             
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=formatted_messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
+            # Create an LLM chain
+            chain = LLMChain(llm=self.llm, prompt=chat_prompt)
             
-            ai_response = response.choices[0].message.content
-            return ai_response
+            logger.debug(f"Sending request to LangChain with {len(messages)} messages")
+            
+            # Run the chain
+            response = chain.run(**input_values)
+            
+            return response
             
         except Exception as e:
-            logger.error(f"Error generating response from OpenAI: {e}")
+            logger.error(f"Error generating response with LangChain: {e}")
             raise

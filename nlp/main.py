@@ -1,7 +1,7 @@
 """
-Bank of Kigali AI Assistant
+Bank of Kigali AI Assistant using LangChain
 ---
-A FastAPI application that leverages OpenAI to answer banking queries related to:
+A FastAPI application that leverages LangChain to answer banking queries related to:
 - Queue management
 - Feedback collection
 - Personalized banking
@@ -13,10 +13,19 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
+import os
 
 from config.settings import settings
 from utils.logging_config import logger
 from api.routes import router
+
+# Initialize LangChain tracing if enabled
+if settings.LANGCHAIN_TRACING:
+    from langchain.callbacks.tracers import ConsoleCallbackHandler
+    # Set environment variables for LangChain
+    os.environ["LANGCHAIN_TRACING"] = "true"
+    os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
+    logger.info("LangChain tracing enabled")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -52,7 +61,7 @@ async def error_handling_middleware(request: Request, call_next):
 
 # Run the application
 if __name__ == "__main__":
-    logger.info(f"Starting {settings.APP_TITLE}")
+    logger.info(f"Starting {settings.APP_TITLE} with LangChain integration")
     logger.info(f"API documentation available at: http://localhost:{settings.PORT}/docs")
     logger.info(f"API endpoint available at: http://localhost:{settings.PORT}/chat")
     

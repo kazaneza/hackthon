@@ -9,7 +9,7 @@ from datetime import datetime
 import json
 
 from api.models import ChatRequest, ChatResponse, HealthResponse
-from core.ai_service import OpenAIService
+from core.ai_service import LangChainService  # Updated import
 from core.message_store import MessageStore
 from core.prompts import get_follow_up_suggestions
 from config.settings import settings
@@ -25,17 +25,17 @@ message_store = MessageStore(
 )
 
 # Dependencies
-async def get_openai_service():
-    """Dependency to get OpenAI service."""
+async def get_langchain_service():
+    """Dependency to get LangChain service."""
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
-    return OpenAIService(api_key=settings.OPENAI_API_KEY)
+    return LangChainService(api_key=settings.OPENAI_API_KEY)
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    openai_service: OpenAIService = Depends(get_openai_service)
+    langchain_service: LangChainService = Depends(get_langchain_service)  # Updated dependency
 ):
     try:
         # Use provided user_id or generate an anonymous one
@@ -55,7 +55,7 @@ async def chat(
         context_messages = []
         
         for prev_msg in previous_messages:
-            # Ensure the role is valid for OpenAI
+            # Ensure the role is valid
             if hasattr(prev_msg, 'role') and prev_msg.role in ['system', 'assistant', 'user', 'function', 'tool', 'developer']:
                 if prev_msg.content not in current_message_contents:
                     context_messages.append(prev_msg)
@@ -63,8 +63,8 @@ async def chat(
         # Create combined messages list with context
         all_messages = context_messages + request.messages
         
-        # Generate response from OpenAI
-        ai_response = await openai_service.generate_response(
+        # Generate response from LangChain
+        ai_response = await langchain_service.generate_response(
             service_category=request.service_category,
             messages=all_messages
         )
