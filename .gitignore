@@ -1,7 +1,7 @@
 # Ignore environment files
 .env
 nlp/.env
-../backend/.env
+backend/.env  # <-- corrected this line
 
 # Ignore logs
 *.log
@@ -11,4 +11,4 @@ __pycache__/
 *.py[cod]
 
 # Ignore conversation store
-../backend/conversation_store.json
+backend/conversation_store.json  # <-- corrected this too
