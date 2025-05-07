@@ -4,3 +4,5 @@
 __pycache__/
 *__pycache__/
 nlp/__pycache__/main.cpython-313.pyc
+nlp/.env
+nlp/__pycache__/main.cpython-313.pyc
