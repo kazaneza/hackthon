@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from api.models import ChatRequest, ChatResponse, HealthResponse
 from core.ai_service import LangChainService
-from core.document_qa import DocumentBasedAIService  # New import
+from core.document_qa import DocumentBasedAIService
 from core.message_store import MessageStore
 from core.prompts import get_follow_up_suggestions
 from config.settings import settings
@@ -83,19 +83,8 @@ async def chat(
             messages=all_messages
         )
         
-        # Extract response and sources
+        # Extract response - don't include sources in client-facing response
         ai_response = result["response"]
-        sources = result.get("sources", [])
-        
-        # Add document sources to response if available
-        if sources:
-            # Format sources information
-            sources_text = "\n\nThis information comes from the following documents:\n"
-            for i, source in enumerate(sources):
-                sources_text += f"{i+1}. {source['product']} ({source['category'].upper()}) - {source['file']} (Page {source['page']})\n"
-            
-            # Append sources to response
-            ai_response += sources_text
         
         # Store AI response in message store
         from api.models import ChatMessage

@@ -12,12 +12,12 @@ import os
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from langchain.document_loaders import PyPDFLoader, DirectoryLoader
+from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import Chroma
+from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
-from langchain.chat_models import ChatOpenAI
+from langchain_community.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate
 
 # Import existing components
@@ -121,8 +121,8 @@ class DocumentProcessor:
         """
         # Create text splitter for chunking documents
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
+            chunk_size=1500,        # Increased for better context
+            chunk_overlap=300,      # Increased for better overlap
             separators=["\n\n", "\n", ". ", " ", ""]
         )
         
@@ -147,7 +147,11 @@ class DocumentProcessor:
         )
         
         # Persist the vector store
-        self.vector_store.persist()
+        # Note: This is no longer needed with newer versions of Chroma but kept for compatibility
+        try:
+            self.vector_store.persist()
+        except:
+            logger.info("Vector store auto-persisted")
         
         logger.info(f"Created vector store with {len(document_chunks)} document chunks")
     
@@ -199,7 +203,7 @@ class DocumentProcessor:
         
         return self.vector_store.as_retriever(
             search_type="similarity",
-            search_kwargs={"k": 5}
+            search_kwargs={"k": 7}  # Increased from 5 for better context
         )
 
 
@@ -219,7 +223,7 @@ class ProductQAService:
         self.llm = ChatOpenAI(
             openai_api_key=settings.OPENAI_API_KEY,
             model_name=settings.OPENAI_MODEL,
-            temperature=settings.OPENAI_TEMPERATURE,
+            temperature=0.7,  # Default temperature for balanced creativity
             max_tokens=settings.OPENAI_MAX_TOKENS
         )
         
@@ -237,10 +241,20 @@ class ProductQAService:
         
         # Create system template with context for product information
         system_template = """You are the Bank of Kigali's AI assistant specializing in product information.
-        
+
 Use the following pieces of context to answer the customer's question about Bank of Kigali products and services.
-If you don't know the answer, just say that you don't know, don't try to make up an answer.
-Always include the product category and name in your response.
+Even if the information is partial or doesn't exactly match the question, try to provide the most relevant details from the context.
+If the customer asks about a specific product that might be a typo or slight variation (like SEMI vs SME), consider providing information about the closest matching product.
+
+Be conversational and helpful, focusing on what would be most useful to the customer. Avoid mentioning the specific documents you're using in your answer.
+
+Here are some guidelines for your responses:
+1. Start with a direct answer to the question if possible
+2. Provide relevant details about the product features, benefits, or requirements
+3. If appropriate, suggest related products or services that might be of interest
+4. End with a helpful suggestion or offer to provide more information on specific aspects
+
+If you genuinely don't have any relevant information, politely say something like "I don't have specific information about that product. Would you like me to tell you about our other similar offerings instead?"
 
 {context}
 """
@@ -283,7 +297,7 @@ Always include the product category and name in your response.
             answer = result.get("result", "")
             source_docs = result.get("source_documents", [])
             
-            # Format source information
+            # Format source information (for internal use/logging only)
             sources = []
             for i, doc in enumerate(source_docs):
                 sources.append({
@@ -301,7 +315,7 @@ Always include the product category and name in your response.
         except Exception as e:
             logger.error(f"Error answering product question: {e}")
             return {
-                "answer": "I encountered an error while trying to find information about this product. Please try again or contact a bank representative.",
+                "answer": "I'm sorry, I couldn't find specific information about that. Would you like to know about our other banking products and services instead?",
                 "sources": []
             }
 
@@ -349,13 +363,35 @@ class DocumentBasedAIService:
         product_keywords = [
             "product", "service", "account", "loan", "credit", "card", "mortgage",
             "interest", "rate", "fee", "charge", "term", "deposit", "savings",
-            "checking", "investment", "insurance", "sme", "corporate", "retail",
-            "institutional", "agribusiness", "agri", "business", "banking"
+            "checking", "investment", "insurance", "sme", "semi", "corporate", "retail",
+            "institutional", "agribusiness", "agri", "business", "banking", "offer",
+            "application", "apply", "eligibility", "requirement", "qualify", "benefit",
+            "feature", "package", "plan", "program", "promotion", "special", "discount",
+            "financing", "fund", "money", "payment", "transaction", "transfer", "borrow"
         ]
         
-        # Check if message contains product keywords
+        # Question indicators
+        question_indicators = [
+            "how", "what", "where", "when", "who", "which", "why", "can", "do", "does",
+            "tell me about", "explain", "describe", "information on", "details about"
+        ]
+        
+        # Check if message contains product keywords or question indicators about products
         message_lower = message.lower()
-        return any(keyword in message_lower for keyword in product_keywords)
+        
+        # Check for product keywords
+        has_product_keyword = any(keyword in message_lower for keyword in product_keywords)
+        
+        # Check for question indicators followed by product keywords
+        has_question_about_product = any(
+            indicator in message_lower and any(
+                keyword in message_lower[message_lower.find(indicator):] 
+                for keyword in product_keywords
+            )
+            for indicator in question_indicators
+        )
+        
+        return has_product_keyword or has_question_about_product
     
     async def generate_response(self, service_category: str, messages: List[Any]) -> Dict[str, Any]:
         """
@@ -408,97 +444,7 @@ class DocumentBasedAIService:
             raise
 
 
-# Modified route implementation for PDF-based product QA
-def update_chat_route():
-    """
-    This function shows how to modify the existing chat route to include document-based QA.
-    Copy this into api/routes.py and adapt as needed.
-    """
-    
-    # From api.routes.py (modified version)
-    @router.post("/chat", response_model=ChatResponse)
-    async def chat(
-        request: ChatRequest,
-        document_ai_service: DocumentBasedAIService = Depends(get_document_ai_service)  # New dependency
-    ):
-        try:
-            # Use provided user_id or generate an anonymous one
-            user_id = request.user_id or f"anonymous-{uuid4()}"
-            
-            # Get previous messages for context (same as original)
-            previous_messages = message_store.get_messages(user_id)
-            
-            # Add new user messages to store (same as original)
-            for msg in request.messages:
-                if msg.role == "user":  # Only store user messages
-                    message_store.add_message(user_id, msg)
-            
-            # Combine previous messages with current request (same as original)
-            current_message_contents = [m.content for m in request.messages]
-            context_messages = []
-            
-            for prev_msg in previous_messages:
-                if hasattr(prev_msg, 'role') and prev_msg.role in ['system', 'assistant', 'user', 'function', 'tool', 'developer']:
-                    if prev_msg.content not in current_message_contents:
-                        context_messages.append(prev_msg)
-            
-            # Create combined messages list with context
-            all_messages = context_messages + request.messages
-            
-            # Generate response using document-based AI service
-            result = await document_ai_service.generate_response(
-                service_category=request.service_category,
-                messages=all_messages
-            )
-            
-            # Extract response and sources
-            ai_response = result["response"]
-            sources = result["sources"]
-            
-            # Add document sources to response if available
-            if sources:
-                # Format sources information
-                sources_text = "\n\nThis information comes from the following documents:\n"
-                for i, source in enumerate(sources):
-                    sources_text += f"{i+1}. {source['product']} ({source['category'].upper()}) - {source['file']} (Page {source['page']})\n"
-                
-                # Append sources to response
-                ai_response += sources_text
-            
-            # Store AI response in message store (same as original)
-            from api.models import ChatMessage
-            message_store.add_message(
-                user_id, 
-                ChatMessage(role="assistant", content=ai_response)
-            )
-            
-            # Rest is the same as original
-            conversation_id = str(uuid4())
-            suggestions = get_follow_up_suggestions(request.service_category)
-            
-            return ChatResponse(
-                response=ai_response,
-                conversation_id=conversation_id,
-                service_category=request.service_category,
-                timestamp=datetime.now().isoformat(),
-                suggestions=suggestions
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in chat endpoint: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
-
-
-# New dependency for document-based AI service
-async def get_document_ai_service():
-    """Dependency to get document-based AI service."""
-    if not settings.OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
-    
-    return DocumentBasedAIService(api_key=settings.OPENAI_API_KEY)
-
-
-# Example usage
+# For standalone testing
 if __name__ == "__main__":
     import asyncio
     
