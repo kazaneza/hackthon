@@ -37,16 +37,6 @@ async def chat(
     request: ChatRequest,
     openai_service: OpenAIService = Depends(get_openai_service)
 ):
-    """
-    Process a chat request and return an AI-generated response.
-    
-    Args:
-        request: Chat request with messages and service category
-        openai_service: OpenAI service dependency
-    
-    Returns:
-        ChatResponse with AI-generated response and suggestions
-    """
     try:
         # Use provided user_id or generate an anonymous one
         user_id = request.user_id or f"anonymous-{uuid4()}"
@@ -65,8 +55,10 @@ async def chat(
         context_messages = []
         
         for prev_msg in previous_messages:
-            if prev_msg.content not in current_message_contents:
-                context_messages.append(prev_msg)
+            # Ensure the role is valid for OpenAI
+            if hasattr(prev_msg, 'role') and prev_msg.role in ['system', 'assistant', 'user', 'function', 'tool', 'developer']:
+                if prev_msg.content not in current_message_contents:
+                    context_messages.append(prev_msg)
         
         # Create combined messages list with context
         all_messages = context_messages + request.messages

@@ -39,9 +39,14 @@ class OpenAIService:
         system_prompt = get_system_prompt(service_category)
         
         formatted_messages = [{"role": "system", "content": system_prompt}]
-        formatted_messages.extend([
-            {"role": m.role, "content": m.content} for m in messages
-        ])
+        
+        # Ensure each message has a valid role before adding
+        valid_roles = ['system', 'assistant', 'user', 'function', 'tool', 'developer']
+        
+        for m in messages:
+            if hasattr(m, 'role') and hasattr(m, 'content'):
+                role = m.role if m.role in valid_roles else "user"  # Default to user if invalid
+                formatted_messages.append({"role": role, "content": m.content})
         
         return formatted_messages
     
