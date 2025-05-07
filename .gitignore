@@ -13,4 +13,4 @@ __pycache__/
 # Ignore conversation store
 backend/conversation_store.json  # <-- corrected this too
 
- nlp/data/products/chroma_db/
+nlp/data/products/chroma_db/
