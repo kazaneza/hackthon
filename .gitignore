@@ -1,8 +1,14 @@
+# Ignore environment files
 .env
-../backend/.env
-../backend/conversation_store.json
-__pycache__/
-*__pycache__/
-nlp/__pycache__/main.cpython-313.pyc
 nlp/.env
-nlp/__pycache__/main.cpython-313.pyc
+../backend/.env
+
+# Ignore logs
+*.log
+
+# Ignore compiled Python files
+__pycache__/
+*.py[cod]
+
+# Ignore conversation store
+../backend/conversation_store.json
