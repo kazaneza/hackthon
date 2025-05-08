@@ -229,10 +229,13 @@ class ProductQAService:
         
         logger.info("Product QA service initialized")
     
-    def create_qa_chain(self) -> RetrievalQA:
+    def create_qa_chain(self, user_info=None) -> RetrievalQA:
         """
         Create a QA chain for product queries.
         
+        Args:
+            user_info: Optional dictionary with user information
+            
         Returns:
             RetrievalQA chain
         """
@@ -240,7 +243,7 @@ class ProductQAService:
         retriever = self.document_processor.get_retriever()
         
         # Create system template with context for product information
-        system_template = """You are the Bank of Kigali's AI assistant specializing in product information.
+        system_template = """You are the Bank of Kigali's AI assistant named ALICE, specializing in product information.
 
 Use the following pieces of context to answer the customer's question about Bank of Kigali products and services.
 Even if the information is partial or doesn't exactly match the question, try to provide the most relevant details from the context.
@@ -248,6 +251,13 @@ If the customer asks about a specific product that might be a typo or slight var
 
 Be conversational and helpful, focusing on what would be most useful to the customer. Avoid mentioning the specific documents you're using in your answer.
 
+"""
+    
+        # Add personalization if user info is available
+        if user_info and "name" in user_info:
+            system_template += f"\nThe customer's name is {user_info['name']}. Please address them by name in a natural way during your response.\n"
+        
+        system_template += """
 Here are some guidelines for your responses:
 1. Start with a direct answer to the question if possible
 2. Provide relevant details about the product features, benefits, or requirements
@@ -258,7 +268,7 @@ If you genuinely don't have any relevant information, politely say something lik
 
 {context}
 """
-        
+    
         # Create prompt template
         prompt = ChatPromptTemplate.from_messages([
             SystemMessagePromptTemplate.from_template(system_template),
@@ -273,21 +283,22 @@ If you genuinely don't have any relevant information, politely say something lik
             chain_type_kwargs={"prompt": prompt},
             return_source_documents=True
         )
-        
+    
         return qa_chain
     
-    async def answer_product_question(self, question: str) -> Dict[str, Any]:
+    async def answer_product_question(self, question: str, user_info=None) -> Dict[str, Any]:
         """
         Answer a product-related question using the document-based QA system.
         
         Args:
             question: Customer's product question
+            user_info: Optional dictionary with user information
             
         Returns:
             Dictionary with answer and source documents
         """
-        # Create QA chain
-        qa_chain = self.create_qa_chain()
+        # Create QA chain with user info
+        qa_chain = self.create_qa_chain(user_info)
         
         try:
             # Run the chain
@@ -296,6 +307,19 @@ If you genuinely don't have any relevant information, politely say something lik
             # Extract answer and source documents
             answer = result.get("result", "")
             source_docs = result.get("source_documents", [])
+            
+            # If we know the user's name and it's not in the answer, add it
+            if user_info and "name" in user_info and user_info["name"]:
+                name = user_info["name"]
+                if name not in answer:
+                    # Add name to the beginning or end based on response
+                    if answer.startswith("Hello") or answer.startswith("Hi"):
+                        answer = answer.replace("Hello", f"Hello {name}", 1)
+                        answer = answer.replace("Hi", f"Hi {name}", 1)
+                    else:
+                        # Add to the end if not already there
+                        if not answer.endswith("?"):
+                            answer += f" Is there anything else I can help you with, {name}?"
             
             # Format source information (for internal use/logging only)
             sources = []
@@ -314,8 +338,14 @@ If you genuinely don't have any relevant information, politely say something lik
             
         except Exception as e:
             logger.error(f"Error answering product question: {e}")
+            default_response = "I'm sorry, I couldn't find specific information about that. Would you like to know about our other banking products and services instead?"
+            
+            # Add name to default response if available
+            if user_info and "name" in user_info and user_info["name"]:
+                default_response = f"I'm sorry, {user_info['name']}. I couldn't find specific information about that. Would you like to know about our other banking products and services instead?"
+            
             return {
-                "answer": "I'm sorry, I couldn't find specific information about that. Would you like to know about our other banking products and services instead?",
+                "answer": default_response,
                 "sources": []
             }
 
@@ -405,6 +435,35 @@ class DocumentBasedAIService:
             Response with answer and optional sources
         """
         try:
+            # Extract user information from context message
+            user_info = {}
+            for m in messages:
+                if hasattr(m, 'role') and m.role == "system" and hasattr(m, 'content'):
+                    if "User information:" in m.content:
+                        # Extract name
+                        if "Name is " in m.content:
+                            name_start = m.content.find("Name is ") + len("Name is ")
+                            name_end = m.content.find(".", name_start)
+                            if name_end == -1:
+                                name_end = len(m.content)
+                            user_info["name"] = m.content[name_start:name_end].strip()
+                        
+                        # Extract account number
+                        if "Account number is " in m.content:
+                            acct_start = m.content.find("Account number is ") + len("Account number is ")
+                            acct_end = m.content.find(".", acct_start)
+                            if acct_end == -1:
+                                acct_end = len(m.content)
+                            user_info["account_number"] = m.content[acct_start:acct_end].strip()
+                        
+                        # Extract customer ID
+                        if "Customer ID is " in m.content:
+                            id_start = m.content.find("Customer ID is ") + len("Customer ID is ")
+                            id_end = m.content.find(".", id_start)
+                            if id_end == -1:
+                                id_end = len(m.content)
+                            user_info["customer_id"] = m.content[id_start:id_end].strip()
+            
             # Extract the last user message
             last_user_message = None
             for m in reversed(messages):
@@ -417,8 +476,8 @@ class DocumentBasedAIService:
             
             # Check if it's a product question
             if self.is_product_question(last_user_message):
-                # Use product QA
-                result = await self.product_qa.answer_product_question(last_user_message)
+                # Use product QA with user info
+                result = await self.product_qa.answer_product_question(last_user_message, user_info)
                 
                 return {
                     "response": result["answer"],
@@ -433,6 +492,20 @@ class DocumentBasedAIService:
                     service_category=service_category,
                     messages=messages
                 )
+                
+                # If we know the user's name, ensure it's used in the response
+                if user_info and "name" in user_info and user_info["name"]:
+                    name = user_info["name"]
+                    # Check if the name is already used in the response
+                    if name not in ai_response:
+                        # Add name to the beginning or end based on response
+                        if ai_response.startswith("Hello") or ai_response.startswith("Hi"):
+                            ai_response = ai_response.replace("Hello", f"Hello {name}", 1)
+                            ai_response = ai_response.replace("Hi", f"Hi {name}", 1)
+                        else:
+                            # Add to the end if not already there
+                            if not ai_response.endswith("?"):
+                                ai_response += f" Is there anything else I can help you with, {name}?"
                 
                 return {
                     "response": ai_response,
@@ -456,7 +529,7 @@ if __name__ == "__main__":
         # Initialize product QA service
         product_qa = ProductQAService(doc_processor)
         
-        # Test product question
+        # Test product question without user info
         question = "What are the requirements for an SME loan?"
         result = await product_qa.answer_product_question(question)
         
@@ -465,6 +538,13 @@ if __name__ == "__main__":
         print("Sources:")
         for source in result["sources"]:
             print(f"  - {source['product']} ({source['category']}) - {source['file']} (Page {source['page']})")
+        
+        # Test with user info
+        user_info = {"name": "John", "account_number": "12345678"}
+        result_with_name = await product_qa.answer_product_question(question, user_info)
+        
+        print("\nQuestion with user info: " + question)
+        print(f"Personalized Answer: {result_with_name['answer']}")
     
     # Run test
     asyncio.run(test_product_qa())

@@ -84,6 +84,10 @@ def create_context_message(user_id: str) -> Optional[ChatMessage]:
         user_info_text = "User information: "
         if "name" in user_info:
             user_info_text += f"Name is {user_info['name']}. "
+        if "account_number" in user_info:
+            user_info_text += f"Account number is {user_info['account_number']}. "
+        if "customer_id" in user_info:
+            user_info_text += f"Customer ID is {user_info['customer_id']}. "
         context_parts.append(user_info_text)
     
     # Add conversation summary if available
@@ -97,6 +101,20 @@ def create_context_message(user_id: str) -> Optional[ChatMessage]:
                 prefix = "User: " if msg.role == "user" else "Assistant: "
                 context += f"{prefix}{msg.content[:50]}{'...' if len(msg.content) > 50 else ''} "
         context_parts.append(context)
+    
+    # Add personalization directives to the AI
+    personalization_directives = [
+        "IMPORTANT PERSONALIZATION GUIDELINES:",
+        "1. If you know the user's name, use it naturally in your responses to personalize the conversation."
+    ]
+    
+    if "name" in user_info:
+        personalization_directives.append(f"2. Address the user as '{user_info['name']}' at least once in your response.")
+    else:
+        personalization_directives.append("2. If the user hasn't shared their name yet and this is a new conversation, politely ask for their name.")
+    
+    personalization_directives.append("3. If appropriate for the service being provided, ask for account details if not already provided.")
+    context_parts.append("\n".join(personalization_directives))
     
     # Create system message with context
     return ChatMessage(

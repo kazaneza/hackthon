@@ -199,7 +199,8 @@ def create_conversation_summary(messages: List[Any], max_length: int = 200) -> s
 
 def extract_user_information(messages: List[Any]) -> Dict[str, str]:
     """
-    Extract potential user information from messages.
+    Extract potential user information from messages including name, 
+    account number, and customer ID.
     
     Args:
         messages: List of message objects
@@ -209,7 +210,13 @@ def extract_user_information(messages: List[Any]) -> Dict[str, str]:
     """
     user_info = {}
     name_patterns = [
-        "my name is", "i am", "call me", "i'm"
+        "my name is", "i am", "call me", "i'm", "this is", "name's"
+    ]
+    account_patterns = [
+        "account number", "my account", "account #", "account no", "account id"
+    ]
+    customer_id_patterns = [
+        "customer id", "customer number", "client id", "client number", "my id", "my customer"
     ]
     
     for msg in messages:
@@ -217,17 +224,68 @@ def extract_user_information(messages: List[Any]) -> Dict[str, str]:
             content = msg.content.lower()
             
             # Look for name
-            for pattern in name_patterns:
-                if pattern in content:
-                    # Extract potential name after pattern
-                    name_start = content.find(pattern) + len(pattern)
-                    name_end = content.find(".", name_start)
-                    if name_end == -1:
-                        name_end = len(content)
-                    
-                    potential_name = content[name_start:name_end].strip()
-                    if potential_name and len(potential_name) < 30:  # Sanity check
-                        user_info["name"] = potential_name.title()
-                        break
+            if "name" not in user_info:
+                for pattern in name_patterns:
+                    if pattern in content:
+                        # Extract potential name after pattern
+                        name_start = content.find(pattern) + len(pattern)
+                        name_end = content.find(".", name_start)
+                        if name_end == -1:
+                            name_end = content.find(",", name_start)
+                        if name_end == -1:
+                            name_end = len(content)
+                        
+                        potential_name = content[name_start:name_end].strip()
+                        if potential_name and len(potential_name) < 30:  # Sanity check
+                            user_info["name"] = potential_name.title()
+                            break
+            
+            # Look for account numbers
+            if "account_number" not in user_info:
+                for pattern in account_patterns:
+                    if pattern in content:
+                        # Look for digits after pattern
+                        pattern_index = content.find(pattern) + len(pattern)
+                        # Find first digit
+                        digit_start = -1
+                        for i in range(pattern_index, len(content)):
+                            if content[i].isdigit():
+                                digit_start = i
+                                break
+                        
+                        if digit_start != -1:
+                            # Find where digits end
+                            digit_end = digit_start
+                            while digit_end < len(content) and (content[digit_end].isdigit() or content[digit_end] == '-'):
+                                digit_end += 1
+                            
+                            account_number = content[digit_start:digit_end].strip()
+                            if account_number and len(account_number) >= 4:  # Simple validation
+                                user_info["account_number"] = account_number
+                                break
+            
+            # Look for customer ID
+            if "customer_id" not in user_info:
+                for pattern in customer_id_patterns:
+                    if pattern in content:
+                        # Look for alphanumeric ID after pattern
+                        pattern_index = content.find(pattern) + len(pattern)
+                        # Find first alphanumeric
+                        id_start = -1
+                        for i in range(pattern_index, len(content)):
+                            if content[i].isalnum():
+                                id_start = i
+                                break
+                        
+                        if id_start != -1:
+                            # Find where ID ends
+                            id_end = id_start
+                            while id_end < len(content) and (content[id_end].isalnum() or content[id_end] == '-'):
+                                id_end += 1
+                            
+                            customer_id = content[id_start:id_end].strip()
+                            if customer_id and len(customer_id) >= 4:  # Simple validation
+                                user_info["customer_id"] = customer_id
+                                break
     
     return user_info
