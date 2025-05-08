@@ -1,5 +1,5 @@
 """
-Configuration settings for the Bank of Kigali AI Assistant application.
+Enhanced configuration settings for the Bank of Kigali AI Assistant application.
 """
 
 import os
@@ -28,8 +28,16 @@ class Settings(BaseSettings):
     LANGCHAIN_PROJECT: str = os.environ.get("LANGCHAIN_PROJECT", "bank-of-kigali-assistant")
     
     # Message store settings
-    MAX_STORED_MESSAGES: int = 5
-    MESSAGE_EXPIRY_SECONDS: int = 120  # 2 minutes
+    MAX_STORED_MESSAGES: int = 10  # Increased from 5 to 10
+    MESSAGE_EXPIRY_SECONDS: int = 1800  # Increased from 120s (2min) to 1800s (30min)
+    
+    # Conversation memory settings
+    ENABLE_CONVERSATION_SUMMARY: bool = True
+    CONVERSATION_SUMMARY_LENGTH: int = 200
+    
+    # Redis settings (for future use)
+    REDIS_ENABLED: bool = os.environ.get("REDIS_ENABLED", "false").lower() == "true"
+    REDIS_URL: str = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     
     # Server settings
     HOST: str = "0.0.0.0"
