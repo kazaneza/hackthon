@@ -14,3 +14,5 @@ __pycache__/
 backend/conversation_store.json  # <-- corrected this too
 
 nlp/data/products/chroma_db/
+backend/app/__pycache__/config.cpython-313.pyc
+backend/app/tts/__pycache__/__init__.cpython-313.pyc
