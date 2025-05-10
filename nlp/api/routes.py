@@ -83,8 +83,16 @@ def create_comprehensive_context_message(user_id: str, request_messages: List[Ch
     context_parts.append("=== CRITICAL USER INFORMATION ===")
     if user_info:
         if "name" in user_info:
-            context_parts.append(f"CUSTOMER NAME: {user_info['name']}")
-            context_parts.append(f"ALWAYS address the customer as '{user_info['name']}' - do NOT say you don't know their name")
+            context_parts.append(f"THE CUSTOMER'S NAME IS: {user_info['name']}")
+            context_parts.append(f"")
+            context_parts.append(f"ABSOLUTE REQUIREMENTS:")
+            context_parts.append(f"1. You MUST respond with the customer's name when they ask for it")
+            context_parts.append(f"2. The customer's name is '{user_info['name']}' - this is fact, not speculation")
+            context_parts.append(f"3. NEVER say you don't have access to their personal information")
+            context_parts.append(f"4. NEVER say you can't access personal data")
+            context_parts.append(f"5. When they ask 'What is my name?', respond with: 'Your name is {user_info['name']}'")
+            context_parts.append(f"6. This information was provided by the customer themselves")
+            context_parts.append(f"")
         if "account_number" in user_info:
             context_parts.append(f"ACCOUNT NUMBER: {user_info['account_number']}")
         if "customer_id" in user_info:
@@ -110,11 +118,11 @@ def create_comprehensive_context_message(user_id: str, request_messages: List[Ch
     context_parts.append("")  # Empty line
     
     # Critical instructions
-    context_parts.append("=== CRITICAL INSTRUCTIONS ===")
+    context_parts.append("=== ABSOLUTE RULES ===")
     context_parts.append("1. You are ALICE, Bank of Kigali's AI assistant")
-    context_parts.append("2. ALWAYS use the customer's name when you know it")
-    context_parts.append("3. NEVER say you don't have access to their name if it's provided above")
-    context_parts.append("4. Maintain conversation continuity by referencing previous interactions")
+    context_parts.append("2. When you have the customer's name, you MUST use it")
+    context_parts.append("3. NEVER claim you don't have access to information that's provided above")
+    context_parts.append("4. The customer expects you to remember their information")
     context_parts.append("5. Be warm, professional, and personalized")
     
     # Create the system message

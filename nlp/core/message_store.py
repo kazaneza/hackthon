@@ -229,15 +229,42 @@ def extract_user_information(messages: List[Any]) -> Dict[str, str]:
                     if pattern in content:
                         # Extract potential name after pattern
                         name_start = content.find(pattern) + len(pattern)
-                        name_end = content.find(".", name_start)
-                        if name_end == -1:
-                            name_end = content.find(",", name_start)
-                        if name_end == -1:
-                            name_end = len(content)
                         
+                        # Find name ending - look for common sentence endings
+                        name_end = len(content)  # default to end of content
+                        
+                        # Common endings to look for
+                        potential_endings = [
+                            ".", ",", "and ", " and ", "but ", " but ", "so ", " so ", 
+                            "?", "!", ";", ":", " the ", " i ", " my ", " or ", "\n",
+                            " he ", " she ", " his ", " her ", " will ", " would ",
+                            " how ", " what ", " when ", " where ", " why "
+                        ]
+                        
+                        # Find the earliest ending
+                        for ending in potential_endings:
+                            ending_pos = content.find(ending, name_start)
+                            if ending_pos != -1 and ending_pos < name_end:
+                                name_end = ending_pos
+                        
+                        # Get the name part
                         potential_name = content[name_start:name_end].strip()
-                        if potential_name and len(potential_name) < 30:  # Sanity check
-                            user_info["name"] = potential_name.title()
+                        
+                        # Remove any trailing punctuation
+                        while potential_name and potential_name[-1] in ",.!?;:":
+                            potential_name = potential_name[:-1].strip()
+                        
+                        # Validate the extracted name
+                        if (potential_name and 
+                            len(potential_name.split()) <= 5 and  # Not too many words (increased from 4 to 5)
+                            len(potential_name) < 60 and  # Not too long
+                            potential_name != pattern and  # Not just the pattern itself
+                            any(char.isalpha() for char in potential_name)):  # Has at least one letter
+                            
+                            # Clean up and title case
+                            name_words = potential_name.split()
+                            clean_name = ' '.join(word.capitalize() for word in name_words if len(word) > 0)
+                            user_info["name"] = clean_name
                             break
             
             # Look for account numbers

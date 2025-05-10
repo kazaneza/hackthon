@@ -1,27 +1,9 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Mic, AlertCircle, Volume2, Building2,
   Bot, MessageSquare, StopCircle,
 } from 'lucide-react';
-import axios from 'axios';
-
-/** -------------------------------------------------
- *  Axios instances for different services
- * ------------------------------------------------- */
-const api = axios.create({ baseURL: 'http://localhost:8000' });
-const nlpApi = axios.create({ baseURL: 'http://localhost:8888' });
-let sessionId: string | null = null;
-
-api.interceptors.response.use((resp) => {
-  const sid = resp.headers['x-session-id'] ?? resp.headers['X-Session-ID'];
-  if (sid) sessionId = sid;
-  return resp;
-});
-
-api.interceptors.request.use((cfg) => {
-  if (sessionId) cfg.headers['X-Session-ID'] = sessionId;
-  return cfg;
-});
+import { api, nlpApi, sessionManager } from './utils/sessionManager';
 
 interface Transaction {
   date: string;
@@ -47,17 +29,37 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSubtitle, setCurrentSubtitle] = useState('');
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  // Load session ID on component mount
+  useEffect(() => {
+    let currentSession = sessionManager.getSessionId();
+    
+    // If no session exists, create a permanent one
+    if (!currentSession) {
+      currentSession = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      sessionManager.setSessionId(currentSession);
+    }
+    
+    setSessionId(currentSession);
+    console.log('Current session:', currentSession);
+  }, []);
+
   const processWithNLP = async (text: string) => {
     try {
+      // Ensure we have a session ID
+      const currentSessionId = sessionManager.getSessionId();
+      console.log('NLP request with session ID:', currentSessionId);
+      
       const { data } = await nlpApi.post('/chat', {
         messages: [{ role: 'user', content: text }],
-        service_category: 'general'
+        service_category: 'general',
+        user_id: currentSessionId // Explicitly pass the user_id
       });
       
       return data.response || data.message;
@@ -98,11 +100,21 @@ function App() {
           const fd = new FormData();
           fd.append('file', file);
           
+          // Ensure we have a session ID
+          const currentSessionId = sessionManager.getSessionId();
+          console.log('Transcription request with session ID:', currentSessionId);
+          
           // First get transcription
           const { data: transcriptionData } = await api.post<APIResponse>('/transcribe', fd);
           setTranscription(transcriptionData.transcription || '');
           
-          // Then process with NLP
+          // Update local session state if it changed
+          const updatedSession = sessionManager.getSessionId();
+          if (updatedSession !== sessionId) {
+            setSessionId(updatedSession);
+          }
+          
+          // Then process with NLP - this will use the session ID
           if (transcriptionData.transcription) {
             const nlpResponse = await processWithNLP(transcriptionData.transcription);
             setGptResponse(nlpResponse);
@@ -124,7 +136,7 @@ function App() {
       mediaRecorderRef.current!.stop();
       setIsRecording(false);
     });
-  }, [isRecording]);
+  }, [isRecording, sessionId]);
 
   const stopPlaying = () => {
     if (audioRef.current) {
@@ -169,6 +181,19 @@ function App() {
     }
   };
 
+  // Optional: Add a button to clear session (for debugging)
+  const clearSession = () => {
+    sessionManager.clearSession();
+    // Create a new session ID
+    const newSessionId = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    sessionManager.setSessionId(newSessionId);
+    setSessionId(newSessionId);
+    
+    setTranscription('');
+    setGptResponse('');
+    setTransactions([]);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-radial from-bk-light via-bk-gray to-bk-gray/50">
       {/* Header */}
@@ -189,6 +214,11 @@ function App() {
             <div className="hidden sm:flex items-center space-x-2 bg-white/10 px-4 py-2 rounded-full text-white text-sm">
               <Bot className="w-4 h-4" />
               <span>Alice AI</span>
+              {sessionId && (
+                <span className="text-xs opacity-75">
+                  Session: {sessionId.substring(0, 8)}...
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -339,6 +369,17 @@ function App() {
         </div>
       </div>
       <audio ref={audioRef} className="hidden" />
+      
+      {/* Optional: Debug session button - remove in production */}
+      {process.env.NODE_ENV === 'development' && (
+        <button
+          onClick={clearSession}
+          className="fixed bottom-4 right-4 bg-red-500 text-white p-2 rounded hover:bg-red-600 transition-colors z-50"
+          title="Clear Session (Development Only)"
+        >
+          Clear Session
+        </button>
+      )}
     </div>
   );
 }
