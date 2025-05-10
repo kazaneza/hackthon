@@ -1,5 +1,5 @@
 """
-API routes for the Bank of Kigali AI Assistant with enhanced debugging for memory issues.
+API routes with enhanced logging for debugging memory issues.
 """
 
 from fastapi import APIRouter, HTTPException, Depends, status
@@ -14,8 +14,7 @@ from dotenv import load_dotenv
 from api.models import ChatRequest, ChatResponse, HealthResponse, ChatMessage
 from core.ai_service import LangChainService
 from core.document_qa import DocumentBasedAIService
-from core.message_store_factory import get_best_available_message_store
-from core.message_store import create_conversation_summary, extract_user_information
+from core.enhanced_message_store import EnhancedMessageStore, extract_user_information_from_qa
 from core.prompts import get_follow_up_suggestions
 from config.settings import settings
 from utils.logging_config import logger
@@ -26,10 +25,13 @@ load_dotenv()
 # Create router
 router = APIRouter()
 
-# Initialize services with improved message store
-message_store = get_best_available_message_store()
+# Initialize services with enhanced message store
+message_store = EnhancedMessageStore(
+    max_pairs=3,  # Keep last 3 Q&A pairs
+    expiry_seconds=settings.MESSAGE_EXPIRY_SECONDS
+)
 
-# Dependencies
+# Dependencies (unchanged)
 async def get_langchain_service():
     """Dependency to get LangChain service."""
     if not settings.OPENAI_API_KEY:
@@ -44,98 +46,67 @@ async def get_document_ai_service():
     
     return DocumentBasedAIService(api_key=settings.OPENAI_API_KEY)
 
-def create_comprehensive_context_message(user_id: str, request_messages: List[ChatMessage]) -> ChatMessage:
+def create_context_from_conversations(user_id: str) -> str:
     """
-    Create a comprehensive system message with all conversation context.
-    This is the main fix for the memory issue.
+    Create context from recent conversations for the AI.
+    
+    Args:
+        user_id: User identifier
+        
+    Returns:
+        Formatted context string
     """
-    # Get ALL previous messages from store
-    stored_messages = message_store.get_messages(user_id)
+    # Get user info and recent conversations
+    user_info = message_store.get_user_info(user_id)
+    recent_conversations = message_store.get_recent_conversations(user_id)
     
-    # Debug logging
-    logger.info(f"Creating context for user {user_id}")
-    logger.info(f"Stored messages count: {len(stored_messages)}")
+    # Enhanced logging for debugging
+    logger.info(f"[CONTEXT] Creating context for user {user_id}")
+    logger.info(f"[CONTEXT] User info: {user_info}")
+    logger.info(f"[CONTEXT] Number of recent conversations: {len(recent_conversations)}")
+    for i, conv in enumerate(recent_conversations):
+        logger.info(f"[CONTEXT] Conversation {i+1}: Q='{conv.question[:50]}...' A='{conv.answer[:50]}...'")
     
-    # Combine ALL messages (stored + current request)
-    all_messages = stored_messages + [msg for msg in request_messages if msg.role != "system"]
-    
-    # Extract user information from ALL messages
-    user_info = extract_user_information(all_messages)
-    
-    # Debug logging for user info
-    logger.info(f"Extracted user info: {user_info}")
-    
-    # Get conversation summary
-    summary = None
-    if hasattr(message_store, 'get_conversation_summary'):
-        summary = message_store.get_conversation_summary(user_id)
-    
-    # Create summary if needed
-    if not summary and len(all_messages) >= 4:
-        summary = create_conversation_summary(all_messages, max_length=250)
-        if summary and hasattr(message_store, 'set_conversation_summary'):
-            message_store.set_conversation_summary(user_id, summary)
-    
-    # Build the context content
     context_parts = []
     
-    # START WITH CRITICAL USER INFORMATION
-    context_parts.append("=== CRITICAL USER INFORMATION ===")
+    # Add user information
     if user_info:
+        context_parts.append("=== USER INFORMATION ===")
         if "name" in user_info:
-            context_parts.append(f"THE CUSTOMER'S NAME IS: {user_info['name']}")
-            context_parts.append(f"")
-            context_parts.append(f"ABSOLUTE REQUIREMENTS:")
-            context_parts.append(f"1. You MUST respond with the customer's name when they ask for it")
-            context_parts.append(f"2. The customer's name is '{user_info['name']}' - this is fact, not speculation")
-            context_parts.append(f"3. NEVER say you don't have access to their personal information")
-            context_parts.append(f"4. NEVER say you can't access personal data")
-            context_parts.append(f"5. When they ask 'What is my name?', respond with: 'Your name is {user_info['name']}'")
-            context_parts.append(f"6. This information was provided by the customer themselves")
-            context_parts.append(f"")
+            context_parts.append(f"Customer name: {user_info['name']}")
+            logger.info(f"[CONTEXT] Adding name to context: {user_info['name']}")
         if "account_number" in user_info:
-            context_parts.append(f"ACCOUNT NUMBER: {user_info['account_number']}")
+            context_parts.append(f"Account number: {user_info['account_number']}")
         if "customer_id" in user_info:
-            context_parts.append(f"CUSTOMER ID: {user_info['customer_id']}")
+            context_parts.append(f"Customer ID: {user_info['customer_id']}")
+        context_parts.append("")
     else:
-        context_parts.append("No user information available yet")
+        logger.warning(f"[CONTEXT] No user info found for user {user_id}")
     
-    context_parts.append("")  # Empty line for spacing
-    
-    # Add conversation history
-    if summary:
-        context_parts.append("=== CONVERSATION SUMMARY ===")
-        context_parts.append(summary)
+    # Add recent conversation history
+    if recent_conversations:
+        context_parts.append("=== RECENT CONVERSATION HISTORY ===")
+        for i, pair in enumerate(recent_conversations, 1):
+            context_parts.append(f"[Q{i}] User: {pair.question}")
+            context_parts.append(f"[A{i}] Assistant: {pair.answer}")
+            context_parts.append("")
     else:
-        context_parts.append("=== RECENT CONVERSATION ===")
-        # Show recent messages
-        for i, msg in enumerate(all_messages[-8:]):  # Last 8 messages
-            if hasattr(msg, 'role') and hasattr(msg, 'content'):
-                prefix = f"[{i+1}] {msg.role.upper()}: "
-                content = msg.content[:150] + "..." if len(msg.content) > 150 else msg.content
-                context_parts.append(prefix + content)
+        logger.warning(f"[CONTEXT] No recent conversations found for user {user_id}")
     
-    context_parts.append("")  # Empty line
+    # Add CRITICAL rules if we have user info
+    if user_info and "name" in user_info:
+        context_parts.append("=== CRITICAL REMINDERS ===")
+        context_parts.append(f"- The customer's name is {user_info['name']}")
+        context_parts.append("- Use their name naturally in your responses")
+        context_parts.append("- When they ask 'what is my name?', respond confidently with their name")
+        context_parts.append("- NEVER claim you don't have access to their information")
+        logger.info(f"[CONTEXT] Added critical reminders for name: {user_info['name']}")
     
-    # Critical instructions
-    context_parts.append("=== ABSOLUTE RULES ===")
-    context_parts.append("1. You are ALICE, Bank of Kigali's AI assistant")
-    context_parts.append("2. When you have the customer's name, you MUST use it")
-    context_parts.append("3. NEVER claim you don't have access to information that's provided above")
-    context_parts.append("4. The customer expects you to remember their information")
-    context_parts.append("5. Be warm, professional, and personalized")
+    final_context = "\n".join(context_parts)
+    logger.info(f"[CONTEXT] Final context length: {len(final_context)} characters")
+    logger.debug(f"[CONTEXT] Full context:\n{final_context}")
     
-    # Create the system message
-    context_content = "\n".join(context_parts)
-    
-    # Debug logging
-    logger.info(f"Context message length: {len(context_content)} characters")
-    logger.info(f"Context preview: {context_content[:200]}...")
-    
-    return ChatMessage(
-        role="system",
-        content=context_content
-    )
+    return final_context
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
@@ -146,40 +117,56 @@ async def chat(
         # Use provided user_id or generate one
         user_id = request.user_id or f"anonymous-{uuid4()}"
         
-        # Debug logging
-        logger.info(f"Processing chat request for user {user_id}")
-        logger.info(f"Service category: {request.service_category}")
-        logger.info(f"Incoming messages: {len(request.messages)}")
+        logger.info(f"[CHAT] Starting chat request for user {user_id}")
+        logger.info(f"[CHAT] Service category: {request.service_category}")
+        logger.info(f"[CHAT] Number of messages in request: {len(request.messages)}")
         
-        # Get current messages from store and refresh expiry
-        current_stored_messages = message_store.get_messages(user_id)
-        logger.info(f"Current stored messages: {len(current_stored_messages)}")
-        
-        # Store user messages from the request
-        for msg in request.messages:
+        # Get the last user message
+        user_message = None
+        for msg in reversed(request.messages):
             if msg.role == "user":
-                message_store.add_message(user_id, msg)
-                logger.info(f"Stored user message: '{msg.content[:50]}...'")
+                user_message = msg.content
+                break
         
-        # Get updated messages after storing
-        all_stored_messages = message_store.get_messages(user_id)
-        logger.info(f"Total stored messages after update: {len(all_stored_messages)}")
+        if not user_message:
+            user_message = "Hello"
         
-        # Create comprehensive context message
-        context_message = create_comprehensive_context_message(user_id, request.messages)
+        logger.info(f"[CHAT] User message: '{user_message}'")
         
-        # Prepare messages for AI
-        messages_for_ai = [context_message]
+        # Check current state before processing
+        logger.info(f"[CHAT] Current state for user {user_id}:")
+        current_user_info = message_store.get_user_info(user_id)
+        current_conversations = message_store.get_recent_conversations(user_id)
+        logger.info(f"[CHAT] - Current user info: {current_user_info}")
+        logger.info(f"[CHAT] - Current conversations count: {len(current_conversations)}")
         
-        # Add current request messages (excluding system messages)
-        for msg in request.messages:
-            if msg.role != "system":
-                messages_for_ai.append(msg)
+        # Create context from stored conversations
+        conversation_context = create_context_from_conversations(user_id)
         
-        # Debug: Log what we're sending to AI
-        logger.info(f"Sending {len(messages_for_ai)} messages to AI")
+        # Create system message with context
+        messages_for_ai = []
+        
+        if conversation_context:
+            system_message = ChatMessage(
+                role="system",
+                content=f"You are ALICE, Bank of Kigali's AI assistant.\n\n{conversation_context}\n\nUse this context to provide personalized, helpful responses. Pay special attention to the user information and previous conversation history."
+            )
+            messages_for_ai.append(system_message)
+            logger.info(f"[CHAT] Created system message with context length: {len(system_message.content)}")
+        else:
+            logger.warning(f"[CHAT] No context available for user {user_id}")
+        
+        # Add the current user message
+        messages_for_ai.append(ChatMessage(role="user", content=user_message))
+        
+        # Log what we're sending to AI
+        logger.info(f"[CHAT] Sending {len(messages_for_ai)} messages to AI:")
         for i, msg in enumerate(messages_for_ai):
-            logger.info(f"Message {i+1}: {msg.role} - {msg.content[:100]}...")
+            logger.info(f"[CHAT] Message {i+1}: {msg.role} - Length: {len(msg.content)}")
+            if msg.role == "system":
+                logger.debug(f"[CHAT] System message preview: {msg.content[:200]}...")
+            else:
+                logger.info(f"[CHAT] {msg.role} message: {msg.content}")
         
         # Generate response
         result = await document_ai_service.generate_response(
@@ -188,18 +175,26 @@ async def chat(
         )
         
         ai_response = result["response"]
+        logger.info(f"[CHAT] AI response: '{ai_response}'")
         
-        # Store AI response
-        ai_message = ChatMessage(role="assistant", content=ai_response)
-        message_store.add_message(user_id, ai_message)
+        # Extract any new user information from this Q&A
+        detected_user_info = extract_user_information_from_qa(user_message, ai_response)
+        logger.info(f"[CHAT] Detected user info from this Q&A: {detected_user_info}")
         
-        # Update conversation summary
-        final_messages = message_store.get_messages(user_id)
-        if len(final_messages) >= 4 and hasattr(message_store, 'set_conversation_summary'):
-            updated_summary = create_conversation_summary(final_messages, max_length=250)
-            if updated_summary:
-                message_store.set_conversation_summary(user_id, updated_summary)
-                logger.info(f"Updated conversation summary for user {user_id}")
+        # Store this Q&A pair
+        message_store.add_qa_pair(
+            user_id=user_id,
+            question=user_message,
+            answer=ai_response,
+            detected_user_info=detected_user_info
+        )
+        
+        # Check state after storing
+        logger.info(f"[CHAT] State after storing Q&A:")
+        final_user_info = message_store.get_user_info(user_id)
+        final_conversations = message_store.get_recent_conversations(user_id)
+        logger.info(f"[CHAT] - Final user info: {final_user_info}")
+        logger.info(f"[CHAT] - Final conversations count: {len(final_conversations)}")
         
         # Generate response
         response = ChatResponse(
@@ -210,49 +205,54 @@ async def chat(
             suggestions=get_follow_up_suggestions(request.service_category)
         )
         
-        # Final debug logging
-        logger.info(f"Response generated for user {user_id}")
-        logger.info(f"Final stored messages count: {len(final_messages)}")
-        
+        logger.info(f"[CHAT] Completed chat request for user {user_id}")
         return response
         
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
+        logger.error(f"[CHAT] Error in chat endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
-# Debugging endpoint to check message store state
-@router.get("/debug/messages/{user_id}")
-async def debug_messages(user_id: str):
-    """Debug endpoint to check the current state of message store."""
+# Debugging endpoint to check conversation state
+@router.get("/debug/conversations/{user_id}")
+async def debug_conversations(user_id: str):
+    """Debug endpoint to check stored conversations for a user."""
     try:
-        messages = message_store.get_messages(user_id)
-        user_info = extract_user_information(messages)
-        summary = None
+        user_info = message_store.get_user_info(user_id)
+        conversations = message_store.get_recent_conversations(user_id)
         
-        if hasattr(message_store, 'get_conversation_summary'):
-            summary = message_store.get_conversation_summary(user_id)
+        logger.info(f"[DEBUG] Checking conversations for user {user_id}")
+        logger.info(f"[DEBUG] User info: {user_info}")
+        logger.info(f"[DEBUG] Number of conversations: {len(conversations)}")
         
-        # Format messages for debugging
-        formatted_messages = []
-        for i, msg in enumerate(messages):
-            if hasattr(msg, 'role') and hasattr(msg, 'content'):
-                formatted_messages.append({
-                    "index": i,
-                    "role": msg.role,
-                    "content_preview": msg.content[:100] + "..." if len(msg.content) > 100 else msg.content,
-                    "full_content": msg.content
-                })
+        formatted_conversations = []
+        for i, pair in enumerate(conversations):
+            formatted_conversations.append({
+                "index": i,
+                "question": pair.question,
+                "answer": pair.answer,
+                "timestamp": pair.timestamp.isoformat(),
+                "user_info_extracted": pair.user_info
+            })
+            logger.info(f"[DEBUG] Conversation {i+1}: Q='{pair.question}' A='{pair.answer}'")
         
-        return {
+        # Generate context to see what AI would receive
+        context = create_context_from_conversations(user_id)
+        logger.info(f"[DEBUG] Generated context:\n{context}")
+        
+        debug_response = {
             "user_id": user_id,
-            "total_messages": len(messages),
-            "user_info_extracted": user_info,
-            "conversation_summary": summary,
-            "all_messages": formatted_messages,
+            "user_info": user_info,
+            "conversation_count": len(conversations),
+            "conversations": formatted_conversations,
+            "generated_context": context,
             "timestamp": datetime.now().isoformat()
         }
+        
+        logger.info(f"[DEBUG] Debug response prepared")
+        return debug_response
+        
     except Exception as e:
-        logger.error(f"Error in debug endpoint: {str(e)}")
+        logger.error(f"[DEBUG] Error in debug endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Debug error: {str(e)}")
 
 # Rest of your existing routes...
@@ -274,32 +274,18 @@ async def clear_chat_history(user_id: str):
         raise HTTPException(status_code=500, detail=f"Error clearing conversation history: {str(e)}")
 
 @router.get("/chat/context/{user_id}")
-async def get_chat_context(user_id: str):
+async def get_user_context(user_id: str):
     """Get the current conversation context for a user."""
     try:
-        messages = message_store.get_messages(user_id)
-        summary = None
-        if hasattr(message_store, 'get_conversation_summary'):
-            summary = message_store.get_conversation_summary(user_id)
-        
-        user_info = extract_user_information(messages)
-        
-        message_info = []
-        for msg in messages:
-            if hasattr(msg, 'role') and hasattr(msg, 'content'):
-                message_info.append({
-                    "role": msg.role,
-                    "content": msg.content[:100] + ("..." if len(msg.content) > 100 else ""),
-                })
+        user_info = message_store.get_user_info(user_id)
+        conversations = message_store.get_recent_conversations(user_id)
+        context = create_context_from_conversations(user_id)
         
         return {
             "user_id": user_id,
-            "message_count": len(messages),
             "user_info": user_info,
-            "conversation_summary": summary,
-            "recent_messages": message_info,
-            "max_stored_messages": getattr(message_store, 'max_messages', settings.MAX_STORED_MESSAGES),
-            "expiry_seconds": getattr(message_store, 'expiry_seconds', settings.MESSAGE_EXPIRY_SECONDS),
+            "conversation_count": len(conversations),
+            "full_context": context,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
