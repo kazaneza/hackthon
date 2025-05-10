@@ -149,7 +149,9 @@ async def chat(
         if conversation_context:
             system_message = ChatMessage(
                 role="system",
-                content=f"You are ALICE, Bank of Kigali's AI assistant.\n\n{conversation_context}\n\nUse this context to provide personalized, helpful responses. Pay special attention to the user information and previous conversation history."
+                content=f"""You are ALICE, Bank of Kigali's AI assistant.\n\n{conversation_context}\n\nUse this context to provide personalized, helpful responses. Pay special attention to the user information and previous conversation history.
+                
+                IMPORTANT: When you have customer information in the context, use it! Never deny having access to information that's clearly provided above."""
             )
             messages_for_ai.append(system_message)
             logger.info(f"[CHAT] Created system message with context length: {len(system_message.content)}")
