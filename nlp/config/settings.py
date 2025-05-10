@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     
     # LLM settings
     OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
-    OPENAI_MODEL: str = "gpt-4o-mini"  # Compatible with LangChain
+    OPENAI_MODEL: str = "gpt-4o"  # Compatible with LangChain
     OPENAI_TEMPERATURE: float = 0.7
     OPENAI_MAX_TOKENS: int = 500
     
