@@ -1,5 +1,5 @@
 """
-API routes for the Bank of Kigali AI Assistant with improved conversation memory.
+API routes for the Bank of Kigali AI Assistant with enhanced debugging for memory issues.
 """
 
 from fastapi import APIRouter, HTTPException, Depends, status
@@ -44,82 +44,89 @@ async def get_document_ai_service():
     
     return DocumentBasedAIService(api_key=settings.OPENAI_API_KEY)
 
-def create_context_message(user_id: str) -> Optional[ChatMessage]:
+def create_comprehensive_context_message(user_id: str, request_messages: List[ChatMessage]) -> ChatMessage:
     """
-    Create a system message with conversation context.
-    
-    Args:
-        user_id: User ID to get context for
-        
-    Returns:
-        System message with context, or None if no context available
+    Create a comprehensive system message with all conversation context.
+    This is the main fix for the memory issue.
     """
-    # Get previous messages
-    previous_messages = message_store.get_messages(user_id)
-    if not previous_messages:
-        return None
+    # Get ALL previous messages from store
+    stored_messages = message_store.get_messages(user_id)
     
-    # Try to get conversation summary
+    # Debug logging
+    logger.info(f"Creating context for user {user_id}")
+    logger.info(f"Stored messages count: {len(stored_messages)}")
+    
+    # Combine ALL messages (stored + current request)
+    all_messages = stored_messages + [msg for msg in request_messages if msg.role != "system"]
+    
+    # Extract user information from ALL messages
+    user_info = extract_user_information(all_messages)
+    
+    # Debug logging for user info
+    logger.info(f"Extracted user info: {user_info}")
+    
+    # Get conversation summary
     summary = None
     if hasattr(message_store, 'get_conversation_summary'):
         summary = message_store.get_conversation_summary(user_id)
     
-    # If no summary exists, create one
-    if not summary and len(previous_messages) >= 2:
-        summary = create_conversation_summary(
-            previous_messages,
-            max_length=getattr(settings, 'CONVERSATION_SUMMARY_LENGTH', 200)
-        )
+    # Create summary if needed
+    if not summary and len(all_messages) >= 4:
+        summary = create_conversation_summary(all_messages, max_length=250)
         if summary and hasattr(message_store, 'set_conversation_summary'):
             message_store.set_conversation_summary(user_id, summary)
     
-    # Extract user information
-    user_info = extract_user_information(previous_messages)
-    
-    # Create context content
+    # Build the context content
     context_parts = []
     
-    # Add user information if available
+    # START WITH CRITICAL USER INFORMATION
+    context_parts.append("=== CRITICAL USER INFORMATION ===")
     if user_info:
-        user_info_text = "User information: "
         if "name" in user_info:
-            user_info_text += f"Name is {user_info['name']}. "
+            context_parts.append(f"CUSTOMER NAME: {user_info['name']}")
+            context_parts.append(f"ALWAYS address the customer as '{user_info['name']}' - do NOT say you don't know their name")
         if "account_number" in user_info:
-            user_info_text += f"Account number is {user_info['account_number']}. "
+            context_parts.append(f"ACCOUNT NUMBER: {user_info['account_number']}")
         if "customer_id" in user_info:
-            user_info_text += f"Customer ID is {user_info['customer_id']}. "
-        context_parts.append(user_info_text)
+            context_parts.append(f"CUSTOMER ID: {user_info['customer_id']}")
+    else:
+        context_parts.append("No user information available yet")
     
-    # Add conversation summary if available
+    context_parts.append("")  # Empty line for spacing
+    
+    # Add conversation history
     if summary:
-        context_parts.append(f"Conversation summary: {summary}")
+        context_parts.append("=== CONVERSATION SUMMARY ===")
+        context_parts.append(summary)
     else:
-        # Create basic context from recent messages
-        context = "Recent conversation: "
-        for i, msg in enumerate(previous_messages[-3:]):  # Last 3 messages
+        context_parts.append("=== RECENT CONVERSATION ===")
+        # Show recent messages
+        for i, msg in enumerate(all_messages[-8:]):  # Last 8 messages
             if hasattr(msg, 'role') and hasattr(msg, 'content'):
-                prefix = "User: " if msg.role == "user" else "Assistant: "
-                context += f"{prefix}{msg.content[:50]}{'...' if len(msg.content) > 50 else ''} "
-        context_parts.append(context)
+                prefix = f"[{i+1}] {msg.role.upper()}: "
+                content = msg.content[:150] + "..." if len(msg.content) > 150 else msg.content
+                context_parts.append(prefix + content)
     
-    # Add personalization directives to the AI
-    personalization_directives = [
-        "IMPORTANT PERSONALIZATION GUIDELINES:",
-        "1. If you know the user's name, use it naturally in your responses to personalize the conversation."
-    ]
+    context_parts.append("")  # Empty line
     
-    if "name" in user_info:
-        personalization_directives.append(f"2. Address the user as '{user_info['name']}' at least once in your response.")
-    else:
-        personalization_directives.append("2. If the user hasn't shared their name yet and this is a new conversation, politely ask for their name.")
+    # Critical instructions
+    context_parts.append("=== CRITICAL INSTRUCTIONS ===")
+    context_parts.append("1. You are ALICE, Bank of Kigali's AI assistant")
+    context_parts.append("2. ALWAYS use the customer's name when you know it")
+    context_parts.append("3. NEVER say you don't have access to their name if it's provided above")
+    context_parts.append("4. Maintain conversation continuity by referencing previous interactions")
+    context_parts.append("5. Be warm, professional, and personalized")
     
-    personalization_directives.append("3. If appropriate for the service being provided, ask for account details if not already provided.")
-    context_parts.append("\n".join(personalization_directives))
+    # Create the system message
+    context_content = "\n".join(context_parts)
     
-    # Create system message with context
+    # Debug logging
+    logger.info(f"Context message length: {len(context_content)} characters")
+    logger.info(f"Context preview: {context_content[:200]}...")
+    
     return ChatMessage(
         role="system",
-        content="\n".join(context_parts)
+        content=context_content
     )
 
 @router.post("/chat", response_model=ChatResponse)
@@ -128,100 +135,124 @@ async def chat(
     document_ai_service: DocumentBasedAIService = Depends(get_document_ai_service)
 ):
     try:
-        # Use provided user_id or generate an anonymous one
+        # Use provided user_id or generate one
         user_id = request.user_id or f"anonymous-{uuid4()}"
         
-        # Create context message with conversation history and user info
-        context_message = create_context_message(user_id)
+        # Debug logging
+        logger.info(f"Processing chat request for user {user_id}")
+        logger.info(f"Service category: {request.service_category}")
+        logger.info(f"Incoming messages: {len(request.messages)}")
         
-        # Add new user messages to store
+        # Get current messages from store and refresh expiry
+        current_stored_messages = message_store.get_messages(user_id)
+        logger.info(f"Current stored messages: {len(current_stored_messages)}")
+        
+        # Store user messages from the request
         for msg in request.messages:
-            if msg.role == "user":  # Only store user messages
+            if msg.role == "user":
                 message_store.add_message(user_id, msg)
+                logger.info(f"Stored user message: '{msg.content[:50]}...'")
         
-        # Create combined messages list with context
-        all_messages = []
+        # Get updated messages after storing
+        all_stored_messages = message_store.get_messages(user_id)
+        logger.info(f"Total stored messages after update: {len(all_stored_messages)}")
         
-        # Add context message if available
-        if context_message:
-            all_messages.append(context_message)
+        # Create comprehensive context message
+        context_message = create_comprehensive_context_message(user_id, request.messages)
         
-        # Add any system messages from the current request
+        # Prepare messages for AI
+        messages_for_ai = [context_message]
+        
+        # Add current request messages (excluding system messages)
         for msg in request.messages:
-            if hasattr(msg, 'role') and msg.role == "system":
-                all_messages.append(msg)
+            if msg.role != "system":
+                messages_for_ai.append(msg)
         
-        # Add user and assistant messages from the current request
-        for msg in request.messages:
-            if hasattr(msg, 'role') and msg.role in ["user", "assistant"]:
-                all_messages.append(msg)
+        # Debug: Log what we're sending to AI
+        logger.info(f"Sending {len(messages_for_ai)} messages to AI")
+        for i, msg in enumerate(messages_for_ai):
+            logger.info(f"Message {i+1}: {msg.role} - {msg.content[:100]}...")
         
-        # Generate response using document-based AI service
+        # Generate response
         result = await document_ai_service.generate_response(
             service_category=request.service_category,
-            messages=all_messages
+            messages=messages_for_ai
         )
         
-        # Extract response - don't include sources in client-facing response
         ai_response = result["response"]
         
-        # Store AI response in message store
+        # Store AI response
         ai_message = ChatMessage(role="assistant", content=ai_response)
         message_store.add_message(user_id, ai_message)
         
-        # Update conversation summary if needed
-        if hasattr(message_store, 'set_conversation_summary'):
-            all_stored_messages = message_store.get_messages(user_id)
-            updated_summary = create_conversation_summary(
-                all_stored_messages,
-                max_length=getattr(settings, 'CONVERSATION_SUMMARY_LENGTH', 200)
-            )
+        # Update conversation summary
+        final_messages = message_store.get_messages(user_id)
+        if len(final_messages) >= 4 and hasattr(message_store, 'set_conversation_summary'):
+            updated_summary = create_conversation_summary(final_messages, max_length=250)
             if updated_summary:
                 message_store.set_conversation_summary(user_id, updated_summary)
+                logger.info(f"Updated conversation summary for user {user_id}")
         
-        # Generate conversation ID
-        conversation_id = str(uuid4())
-        
-        # Get follow-up suggestions
-        suggestions = get_follow_up_suggestions(request.service_category)
-        
-        # Prepare and return response
-        return ChatResponse(
+        # Generate response
+        response = ChatResponse(
             response=ai_response,
-            conversation_id=conversation_id,
+            conversation_id=str(uuid4()),
             service_category=request.service_category,
             timestamp=datetime.now().isoformat(),
-            suggestions=suggestions
+            suggestions=get_follow_up_suggestions(request.service_category)
         )
         
+        # Final debug logging
+        logger.info(f"Response generated for user {user_id}")
+        logger.info(f"Final stored messages count: {len(final_messages)}")
+        
+        return response
+        
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {str(e)}")
+        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
+# Debugging endpoint to check message store state
+@router.get("/debug/messages/{user_id}")
+async def debug_messages(user_id: str):
+    """Debug endpoint to check the current state of message store."""
+    try:
+        messages = message_store.get_messages(user_id)
+        user_info = extract_user_information(messages)
+        summary = None
+        
+        if hasattr(message_store, 'get_conversation_summary'):
+            summary = message_store.get_conversation_summary(user_id)
+        
+        # Format messages for debugging
+        formatted_messages = []
+        for i, msg in enumerate(messages):
+            if hasattr(msg, 'role') and hasattr(msg, 'content'):
+                formatted_messages.append({
+                    "index": i,
+                    "role": msg.role,
+                    "content_preview": msg.content[:100] + "..." if len(msg.content) > 100 else msg.content,
+                    "full_content": msg.content
+                })
+        
+        return {
+            "user_id": user_id,
+            "total_messages": len(messages),
+            "user_info_extracted": user_info,
+            "conversation_summary": summary,
+            "all_messages": formatted_messages,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error in debug endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Debug error: {str(e)}")
+
+# Rest of your existing routes...
 @router.post("/chat/clear/{user_id}")
 async def clear_chat_history(user_id: str):
-    """
-    Clear the conversation history for a user.
-    
-    Args:
-        user_id: User ID to clear history for
-        
-    Returns:
-        Dictionary with success message
-    """
+    """Clear the conversation history for a user."""
     try:
-        # Handle different message store implementations
-        if hasattr(message_store, 'clear_user_data'):
-            message_store.clear_user_data(user_id)
-        else:
-            # Fallback for basic implementation
-            if hasattr(message_store, 'messages') and user_id in message_store.messages:
-                del message_store.messages[user_id]
-            
-            # Clear conversation summary if it exists
-            if hasattr(message_store, 'conversation_summaries') and hasattr(message_store.conversation_summaries, 'get') and user_id in message_store.conversation_summaries:
-                del message_store.conversation_summaries[user_id]
-        
+        message_store.clear_user_data(user_id)
         logger.info(f"Cleared chat history for user {user_id}")
         
         return {
@@ -236,34 +267,21 @@ async def clear_chat_history(user_id: str):
 
 @router.get("/chat/context/{user_id}")
 async def get_chat_context(user_id: str):
-    """
-    Get the current conversation context for a user.
-    Useful for debugging and development purposes.
-    
-    Args:
-        user_id: User ID to get context for
-        
-    Returns:
-        Dictionary with conversation context info
-    """
+    """Get the current conversation context for a user."""
     try:
         messages = message_store.get_messages(user_id)
-        
-        # Get conversation summary if available
         summary = None
         if hasattr(message_store, 'get_conversation_summary'):
             summary = message_store.get_conversation_summary(user_id)
         
-        # Extract user information
         user_info = extract_user_information(messages)
         
-        # Format messages for display
         message_info = []
         for msg in messages:
             if hasattr(msg, 'role') and hasattr(msg, 'content'):
                 message_info.append({
                     "role": msg.role,
-                    "content": msg.content[:100] + ("..." if len(msg.content) > 100 else "")
+                    "content": msg.content[:100] + ("..." if len(msg.content) > 100 else ""),
                 })
         
         return {
@@ -282,12 +300,7 @@ async def get_chat_context(user_id: str):
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
-    """
-    Health check endpoint to verify API is working.
-    
-    Returns:
-        HealthResponse with status information
-    """
+    """Health check endpoint to verify API is working."""
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now().isoformat(),
@@ -296,158 +309,10 @@ async def health_check():
 
 @router.get("/", include_in_schema=False)
 async def root():
-    """
-    Root endpoint with API information.
-    
-    Returns:
-        Dictionary with API info
-    """
+    """Root endpoint with API information."""
     return {
         "app": settings.APP_TITLE,
         "version": settings.APP_VERSION,
         "documentation": "/docs",
         "health": "/health"
     }
-
-# Copy these from your original routes.py file:
-
-@router.get("/documents/status")
-async def document_status(
-    document_ai_service: DocumentBasedAIService = Depends(get_document_ai_service)
-):
-    """
-    Get document processing status.
-    
-    Returns:
-        Dictionary with document statistics
-    """
-    try:
-        # Get document processor from service
-        doc_processor = document_ai_service.document_processor
-        
-        # Check if vector store exists
-        vector_store_exists = doc_processor.load_vector_store()
-        
-        # Count documents in each category
-        document_counts = {}
-        total_docs = 0
-        
-        for category in doc_processor.categories:
-            category_path = os.path.join(doc_processor.documents_base_path, category)
-            
-            if os.path.exists(category_path):
-                # Count PDF files in category
-                pdf_files = [f for f in os.listdir(category_path) if f.lower().endswith('.pdf')]
-                document_counts[category] = len(pdf_files)
-                total_docs += len(pdf_files)
-        
-        return {
-            "vector_store_initialized": vector_store_exists,
-            "document_counts": document_counts,
-            "total_documents": total_docs,
-            "categories": doc_processor.categories
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in document status endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting document status: {str(e)}")
-
-@router.post("/documents/reindex")
-async def reindex_documents(
-    document_ai_service: DocumentBasedAIService = Depends(get_document_ai_service)
-):
-    """
-    Force reindexing of all documents.
-    
-    Returns:
-        Dictionary with reindexing status
-    """
-    try:
-        # Get document processor from service
-        doc_processor = document_ai_service.document_processor
-        
-        # Get current vector store path
-        vector_store_path = os.path.join(doc_processor.documents_base_path, "chroma_db")
-        
-        # Delete vector store if it exists
-        if os.path.exists(vector_store_path):
-            import shutil
-            shutil.rmtree(vector_store_path)
-            logger.info(f"Deleted existing vector store at {vector_store_path}")
-        
-        # Load and process documents
-        documents = doc_processor.load_documents()
-        document_chunks = doc_processor.process_documents(documents)
-        
-        # Create vector store
-        doc_processor.create_vector_store(document_chunks)
-        
-        return {
-            "status": "success",
-            "message": f"Reindexed {len(documents)} documents into {len(document_chunks)} chunks",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in document reindex endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error reindexing documents: {str(e)}")
-
-@router.get("/documents/search")
-async def search_documents(
-    query: str,
-    limit: Optional[int] = 5,
-    document_ai_service: DocumentBasedAIService = Depends(get_document_ai_service)
-):
-    """
-    Search documents with a query string.
-    
-    Args:
-        query: Search query
-        limit: Maximum number of results to return
-        
-    Returns:
-        Dictionary with search results
-    """
-    try:
-        # Get document processor from service
-        doc_processor = document_ai_service.document_processor
-        
-        # Check if vector store exists
-        if not doc_processor.vector_store:
-            doc_processor.load_vector_store()
-            
-            if not doc_processor.vector_store:
-                raise HTTPException(
-                    status_code=404, 
-                    detail="Vector store not initialized. Please upload documents first."
-                )
-        
-        # Get retriever
-        retriever = doc_processor.get_retriever()
-        
-        # Update search parameters
-        retriever.search_kwargs["k"] = limit
-        
-        # Perform search
-        docs = retriever.get_relevant_documents(query)
-        
-        # Format results
-        results = []
-        for doc in docs:
-            results.append({
-                "content": doc.page_content,
-                "category": doc.metadata.get("category", "unknown"),
-                "product": doc.metadata.get("product_type", "unknown"),
-                "file": doc.metadata.get("filename", "unknown"),
-                "page": doc.metadata.get("page", 0) + 1  # Adjust 0-index to 1-index
-            })
-        
-        return {
-            "query": query,
-            "results": results,
-            "count": len(results)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in document search endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error searching documents: {str(e)}")

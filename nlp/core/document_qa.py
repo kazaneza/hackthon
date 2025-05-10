@@ -1,11 +1,5 @@
 """
-Bank of Kigali Document-Based Product QA System
----
-A document retrieval and question answering system for product PDFs:
-- Processes PDF files from different banking categories (SME, Retail, Corporate, etc.)
-- Creates embeddings for semantic search
-- Retrieves relevant document sections for customer queries
-- Integrates with the existing LangChain-based AI assistant
+Enhanced Document-Based AI Service with improved personalization and context handling.
 """
 
 import os
@@ -24,258 +18,67 @@ from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, Sy
 from config.settings import settings
 from utils.logging_config import logger
 from core.prompts import get_system_prompt
-
-
-class DocumentProcessor:
-    """
-    Processes PDF documents, creates embeddings, and builds a searchable vector store.
-    """
-    
-    def __init__(self, documents_base_path: str = "data/products"):
-        """
-        Initialize the document processor.
-        
-        Args:
-            documents_base_path: Base directory containing product PDF documents
-        """
-        self.documents_base_path = documents_base_path
-        self.categories = ["sme", "retail", "corporate", "institutional", "agribusiness"]
-        self.embeddings = OpenAIEmbeddings(openai_api_key=settings.OPENAI_API_KEY)
-        self.vector_store = None
-        
-        logger.info(f"Document processor initialized with base path: {documents_base_path}")
-    
-    def load_documents(self) -> List[Dict[str, Any]]:
-        """
-        Load all PDF documents from the product categories.
-        
-        Returns:
-            List of document objects with text and metadata
-        """
-        all_documents = []
-        
-        for category in self.categories:
-            category_path = os.path.join(self.documents_base_path, category)
-            
-            if not os.path.exists(category_path):
-                logger.warning(f"Category path does not exist: {category_path}")
-                continue
-            
-            logger.info(f"Loading documents from {category_path}")
-            
-            # Use DirectoryLoader to load all PDFs in the category directory
-            loader = DirectoryLoader(
-                category_path,
-                glob="**/*.pdf",
-                loader_cls=PyPDFLoader
-            )
-            
-            try:
-                category_docs = loader.load()
-                
-                # Add category metadata to each document
-                for doc in category_docs:
-                    # Extract filename from source
-                    filename = os.path.basename(doc.metadata.get("source", "unknown"))
-                    
-                    # Update metadata
-                    doc.metadata.update({
-                        "category": category,
-                        "filename": filename,
-                        "product_type": self._extract_product_type(filename)
-                    })
-                
-                all_documents.extend(category_docs)
-                logger.info(f"Loaded {len(category_docs)} documents from {category}")
-                
-            except Exception as e:
-                logger.error(f"Error loading documents from {category}: {e}")
-        
-        logger.info(f"Total documents loaded: {len(all_documents)}")
-        return all_documents
-    
-    def _extract_product_type(self, filename: str) -> str:
-        """
-        Extract product type from filename.
-        Simple extraction by removing extension and replacing underscores.
-        
-        Args:
-            filename: Document filename
-            
-        Returns:
-            Product type
-        """
-        # Remove extension and replace underscores with spaces
-        name = os.path.splitext(filename)[0]
-        return name.replace("_", " ").title()
-    
-    def process_documents(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Process documents by splitting into chunks.
-        
-        Args:
-            documents: List of document objects
-            
-        Returns:
-            List of document chunks
-        """
-        # Create text splitter for chunking documents
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1500,        # Increased for better context
-            chunk_overlap=300,      # Increased for better overlap
-            separators=["\n\n", "\n", ". ", " ", ""]
-        )
-        
-        # Split documents into chunks
-        document_chunks = text_splitter.split_documents(documents)
-        
-        logger.info(f"Created {len(document_chunks)} document chunks from {len(documents)} documents")
-        return document_chunks
-    
-    def create_vector_store(self, document_chunks: List[Dict[str, Any]]) -> None:
-        """
-        Create a vector store from document chunks.
-        
-        Args:
-            document_chunks: List of document chunks
-        """
-        # Create Chroma vector store with OpenAI embeddings
-        self.vector_store = Chroma.from_documents(
-            documents=document_chunks,
-            embedding=self.embeddings,
-            persist_directory=os.path.join(self.documents_base_path, "chroma_db")
-        )
-        
-        # Persist the vector store
-        # Note: This is no longer needed with newer versions of Chroma but kept for compatibility
-        try:
-            self.vector_store.persist()
-        except:
-            logger.info("Vector store auto-persisted")
-        
-        logger.info(f"Created vector store with {len(document_chunks)} document chunks")
-    
-    def load_vector_store(self) -> bool:
-        """
-        Load an existing vector store if available.
-        
-        Returns:
-            True if loaded successfully, False otherwise
-        """
-        persist_directory = os.path.join(self.documents_base_path, "chroma_db")
-        
-        if os.path.exists(persist_directory):
-            try:
-                self.vector_store = Chroma(
-                    persist_directory=persist_directory,
-                    embedding_function=self.embeddings
-                )
-                logger.info(f"Loaded existing vector store from {persist_directory}")
-                return True
-            except Exception as e:
-                logger.error(f"Error loading vector store: {e}")
-        
-        logger.warning("No existing vector store found")
-        return False
-    
-    def setup(self) -> None:
-        """
-        Set up the document processor by loading or creating a vector store.
-        """
-        # Try to load existing vector store
-        if not self.load_vector_store():
-            # Load and process documents
-            documents = self.load_documents()
-            document_chunks = self.process_documents(documents)
-            
-            # Create vector store
-            self.create_vector_store(document_chunks)
-    
-    def get_retriever(self):
-        """
-        Get a retriever for the vector store.
-        
-        Returns:
-            Retriever for querying the vector store
-        """
-        if not self.vector_store:
-            raise ValueError("Vector store not initialized. Call setup() first.")
-        
-        return self.vector_store.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k": 7}  # Increased from 5 for better context
-        )
+from api.models import ChatMessage
 
 
 class ProductQAService:
-    """
-    Question answering service for Bank of Kigali product information.
-    """
+    """Enhanced Question answering service for Bank of Kigali product information."""
     
-    def __init__(self, document_processor: DocumentProcessor):
-        """
-        Initialize the QA service.
-        
-        Args:
-            document_processor: Document processor with vector store
-        """
+    def __init__(self, document_processor):
+        """Initialize the QA service."""
         self.document_processor = document_processor
         self.llm = ChatOpenAI(
             openai_api_key=settings.OPENAI_API_KEY,
             model_name=settings.OPENAI_MODEL,
-            temperature=0.7,  # Default temperature for balanced creativity
+            temperature=0.7,
             max_tokens=settings.OPENAI_MAX_TOKENS
         )
         
         logger.info("Product QA service initialized")
     
-    def create_qa_chain(self, user_info=None) -> RetrievalQA:
-        """
-        Create a QA chain for product queries.
-        
-        Args:
-            user_info: Optional dictionary with user information
-            
-        Returns:
-            RetrievalQA chain
-        """
-        # Get retriever from document processor
+    def create_qa_chain(self, user_info=None, conversation_context=None) -> RetrievalQA:
+        """Create a QA chain for product queries with enhanced context."""
         retriever = self.document_processor.get_retriever()
         
-        # Create system template with context for product information
-        system_template = """You are the Bank of Kigali's AI assistant named ALICE, specializing in product information.
+        system_template = """You are ALICE, Bank of Kigali's AI assistant specializing in product information.
 
 Use the following pieces of context to answer the customer's question about Bank of Kigali products and services.
-Even if the information is partial or doesn't exactly match the question, try to provide the most relevant details from the context.
-If the customer asks about a specific product that might be a typo or slight variation (like SEMI vs SME), consider providing information about the closest matching product.
+Always be helpful, professional, and personalized when possible."""
 
-Be conversational and helpful, focusing on what would be most useful to the customer. Avoid mentioning the specific documents you're using in your answer.
-
-"""
-    
-        # Add personalization if user info is available
-        if user_info and "name" in user_info:
-            system_template += f"\nThe customer's name is {user_info['name']}. Please address them by name in a natural way during your response.\n"
+        # Add conversation context if available
+        if conversation_context:
+            system_template += f"\n\nCONVERSATION CONTEXT:\n{conversation_context}\n"
+        
+        # Add personalization
+        if user_info:
+            if "name" in user_info:
+                system_template += f"\nThe customer's name is {user_info['name']}. Address them by name naturally throughout your response.\n"
+            
+            if "account_number" in user_info:
+                system_template += f"Account number: {user_info['account_number']}\n"
+            
+            if "customer_id" in user_info:
+                system_template += f"Customer ID: {user_info['customer_id']}\n"
         
         system_template += """
-Here are some guidelines for your responses:
-1. Start with a direct answer to the question if possible
-2. Provide relevant details about the product features, benefits, or requirements
-3. If appropriate, suggest related products or services that might be of interest
-4. End with a helpful suggestion or offer to provide more information on specific aspects
+Important guidelines:
+1. Reference the conversation context to maintain continuity
+2. Use the customer's name naturally when responding
+3. Connect your answer to their previous questions when relevant
+4. Be specific about product features and requirements
+5. Suggest related products when appropriate
+6. Always be warm and professional
 
-If you genuinely don't have any relevant information, politely say something like "I don't have specific information about that product. Would you like me to tell you about our other similar offerings instead?"
+If you don't have specific information, be honest but offer to help find alternatives or connect them with a specialist.
 
 {context}
 """
-    
-        # Create prompt template
+        
         prompt = ChatPromptTemplate.from_messages([
             SystemMessagePromptTemplate.from_template(system_template),
             HumanMessagePromptTemplate.from_template("{question}")
         ])
         
-        # Create RetrievalQA chain
         qa_chain = RetrievalQA.from_chain_type(
             llm=self.llm,
             chain_type="stuff",
@@ -286,49 +89,38 @@ If you genuinely don't have any relevant information, politely say something lik
     
         return qa_chain
     
-    async def answer_product_question(self, question: str, user_info=None) -> Dict[str, Any]:
-        """
-        Answer a product-related question using the document-based QA system.
-        
-        Args:
-            question: Customer's product question
-            user_info: Optional dictionary with user information
-            
-        Returns:
-            Dictionary with answer and source documents
-        """
-        # Create QA chain with user info
-        qa_chain = self.create_qa_chain(user_info)
+    async def answer_product_question(self, question: str, user_info=None, conversation_context=None) -> Dict[str, Any]:
+        """Answer a product-related question with enhanced personalization."""
+        qa_chain = self.create_qa_chain(user_info, conversation_context)
         
         try:
-            # Run the chain
             result = qa_chain({"query": question})
-            
-            # Extract answer and source documents
             answer = result.get("result", "")
             source_docs = result.get("source_documents", [])
             
-            # If we know the user's name and it's not in the answer, add it
+            # Ensure personalization is applied
             if user_info and "name" in user_info and user_info["name"]:
                 name = user_info["name"]
-                if name not in answer:
-                    # Add name to the beginning or end based on response
-                    if answer.startswith("Hello") or answer.startswith("Hi"):
-                        answer = answer.replace("Hello", f"Hello {name}", 1)
-                        answer = answer.replace("Hi", f"Hi {name}", 1)
+                # If name isn't used in the response, add it appropriately
+                if name.lower() not in answer.lower():
+                    # Add greeting with name if response doesn't start with one
+                    if not any(answer.startswith(greeting) for greeting in ["Hello", "Hi", "Good", "Welcome"]):
+                        answer = f"Hello {name}, " + answer
                     else:
-                        # Add to the end if not already there
-                        if not answer.endswith("?"):
-                            answer += f" Is there anything else I can help you with, {name}?"
+                        # Insert name into existing greeting
+                        for greeting in ["Hello", "Hi"]:
+                            if answer.startswith(greeting):
+                                answer = answer.replace(greeting, f"{greeting} {name}", 1)
+                                break
             
-            # Format source information (for internal use/logging only)
+            # Format source information
             sources = []
-            for i, doc in enumerate(source_docs):
+            for doc in source_docs:
                 sources.append({
                     "category": doc.metadata.get("category", "unknown"),
                     "product": doc.metadata.get("product_type", "unknown"),
                     "file": doc.metadata.get("filename", "unknown"),
-                    "page": doc.metadata.get("page", 0) + 1  # Adjust 0-index to 1-index for user readability
+                    "page": doc.metadata.get("page", 0) + 1
                 })
             
             return {
@@ -338,11 +130,10 @@ If you genuinely don't have any relevant information, politely say something lik
             
         except Exception as e:
             logger.error(f"Error answering product question: {e}")
-            default_response = "I'm sorry, I couldn't find specific information about that. Would you like to know about our other banking products and services instead?"
+            default_response = "I'm having trouble finding that information right now. Let me know what specific products you're interested in, and I'll do my best to help."
             
-            # Add name to default response if available
             if user_info and "name" in user_info and user_info["name"]:
-                default_response = f"I'm sorry, {user_info['name']}. I couldn't find specific information about that. Would you like to know about our other banking products and services instead?"
+                default_response = f"I'm sorry, {user_info['name']}. {default_response}"
             
             return {
                 "answer": default_response,
@@ -351,17 +142,10 @@ If you genuinely don't have any relevant information, politely say something lik
 
 
 class DocumentBasedAIService:
-    """
-    Enhanced AI service that integrates document-based QA with the existing LangChain service.
-    """
+    """Enhanced AI service that integrates document-based QA with better context handling."""
     
     def __init__(self, api_key: str = settings.OPENAI_API_KEY):
-        """
-        Initialize the document-based AI service.
-        
-        Args:
-            api_key: OpenAI API key
-        """
+        """Initialize the document-based AI service."""
         # Initialize document processor
         self.document_processor = DocumentProcessor()
         self.document_processor.setup()
@@ -379,17 +163,71 @@ class DocumentBasedAIService:
         
         logger.info("Document-based AI service initialized")
     
-    def is_product_question(self, message: str) -> bool:
-        """
-        Determine if a message is asking about products.
+    def extract_user_context(self, messages: List[Any]) -> Dict[str, Any]:
+        """Extract both user information and conversation context from messages."""
+        user_info = {}
+        conversation_context = ""
+        recent_messages = []
         
-        Args:
-            message: User message
-            
-        Returns:
-            True if the message is asking about products, False otherwise
-        """
-        # Keywords that might indicate a product question
+        for msg in messages:
+            if hasattr(msg, 'role') and hasattr(msg, 'content'):
+                if msg.role == "system":
+                    # Extract user info from system messages
+                    content = msg.content
+                    if "KNOWN USER INFORMATION:" in content:
+                        # Extract name
+                        if "- Name: " in content:
+                            name_start = content.find("- Name: ") + len("- Name: ")
+                            name_end = content.find("\n", name_start)
+                            if name_end != -1:
+                                user_info["name"] = content[name_start:name_end].strip()
+                        
+                        # Extract account number
+                        if "- Account Number: " in content:
+                            acc_start = content.find("- Account Number: ") + len("- Account Number: ")
+                            acc_end = content.find("\n", acc_start)
+                            if acc_end != -1:
+                                user_info["account_number"] = content[acc_start:acc_end].strip()
+                        
+                        # Extract customer ID
+                        if "- Customer ID: " in content:
+                            id_start = content.find("- Customer ID: ") + len("- Customer ID: ")
+                            id_end = content.find("\n", id_start)
+                            if id_end != -1:
+                                user_info["customer_id"] = content[id_start:id_end].strip()
+                    
+                    # Extract conversation summary/context
+                    if "CONVERSATION SUMMARY:" in content:
+                        summary_start = content.find("CONVERSATION SUMMARY:") + len("CONVERSATION SUMMARY:")
+                        summary_end = content.find("\n", summary_start)
+                        if summary_end != -1:
+                            conversation_context = content[summary_start:summary_end].strip()
+                    elif "RECENT CONVERSATION:" in content:
+                        context_start = content.find("RECENT CONVERSATION:")
+                        context_end = content.find("\nPERSONALIZATION RULES:", context_start)
+                        if context_end != -1:
+                            conversation_context = content[context_start:context_end].strip()
+                
+                # Collect recent user/assistant messages
+                if msg.role in ["user", "assistant"]:
+                    recent_messages.append(msg)
+        
+        # Create a brief conversation context if not extracted from system message
+        if not conversation_context and recent_messages:
+            context_lines = []
+            for msg in recent_messages[-4:]:  # Last 4 messages
+                prefix = "User" if msg.role == "user" else "Assistant"
+                content = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
+                context_lines.append(f"{prefix}: {content}")
+            conversation_context = "\n".join(context_lines)
+        
+        return {
+            "user_info": user_info,
+            "conversation_context": conversation_context
+        }
+    
+    def is_product_question(self, message: str) -> bool:
+        """Determine if a message is asking about products."""
         product_keywords = [
             "product", "service", "account", "loan", "credit", "card", "mortgage",
             "interest", "rate", "fee", "charge", "term", "deposit", "savings",
@@ -400,19 +238,18 @@ class DocumentBasedAIService:
             "financing", "fund", "money", "payment", "transaction", "transfer", "borrow"
         ]
         
-        # Question indicators
         question_indicators = [
             "how", "what", "where", "when", "who", "which", "why", "can", "do", "does",
-            "tell me about", "explain", "describe", "information on", "details about"
+            "tell me about", "explain", "describe", "information on", "details about",
+            "i want", "i need", "show me", "find", "looking for"
         ]
         
-        # Check if message contains product keywords or question indicators about products
         message_lower = message.lower()
         
-        # Check for product keywords
+        # Check for direct product mentions
         has_product_keyword = any(keyword in message_lower for keyword in product_keywords)
         
-        # Check for question indicators followed by product keywords
+        # Check for questions about products
         has_question_about_product = any(
             indicator in message_lower and any(
                 keyword in message_lower[message_lower.find(indicator):] 
@@ -424,47 +261,14 @@ class DocumentBasedAIService:
         return has_product_keyword or has_question_about_product
     
     async def generate_response(self, service_category: str, messages: List[Any]) -> Dict[str, Any]:
-        """
-        Generate a response using document-based QA or LangChain.
-        
-        Args:
-            service_category: Service category for the prompt
-            messages: List of message objects
-            
-        Returns:
-            Response with answer and optional sources
-        """
+        """Generate a response using document-based QA or LangChain with full context."""
         try:
-            # Extract user information from context message
-            user_info = {}
-            for m in messages:
-                if hasattr(m, 'role') and m.role == "system" and hasattr(m, 'content'):
-                    if "User information:" in m.content:
-                        # Extract name
-                        if "Name is " in m.content:
-                            name_start = m.content.find("Name is ") + len("Name is ")
-                            name_end = m.content.find(".", name_start)
-                            if name_end == -1:
-                                name_end = len(m.content)
-                            user_info["name"] = m.content[name_start:name_end].strip()
-                        
-                        # Extract account number
-                        if "Account number is " in m.content:
-                            acct_start = m.content.find("Account number is ") + len("Account number is ")
-                            acct_end = m.content.find(".", acct_start)
-                            if acct_end == -1:
-                                acct_end = len(m.content)
-                            user_info["account_number"] = m.content[acct_start:acct_end].strip()
-                        
-                        # Extract customer ID
-                        if "Customer ID is " in m.content:
-                            id_start = m.content.find("Customer ID is ") + len("Customer ID is ")
-                            id_end = m.content.find(".", id_start)
-                            if id_end == -1:
-                                id_end = len(m.content)
-                            user_info["customer_id"] = m.content[id_start:id_end].strip()
+            # Extract user context
+            context_data = self.extract_user_context(messages)
+            user_info = context_data["user_info"]
+            conversation_context = context_data["conversation_context"]
             
-            # Extract the last user message
+            # Get the last user message
             last_user_message = None
             for m in reversed(messages):
                 if hasattr(m, 'role') and m.role == "user":
@@ -476,40 +280,65 @@ class DocumentBasedAIService:
             
             # Check if it's a product question
             if self.is_product_question(last_user_message):
-                # Use product QA with user info
-                result = await self.product_qa.answer_product_question(last_user_message, user_info)
+                # Use product QA with full context
+                result = await self.product_qa.answer_product_question(
+                    last_user_message, 
+                    user_info=user_info,
+                    conversation_context=conversation_context
+                )
                 
                 return {
                     "response": result["answer"],
                     "sources": result["sources"]
                 }
             else:
-                # Use existing LangChain service (imported from your current code)
+                # Use existing LangChain service with enhanced context
                 from core.ai_service import LangChainService
                 langchain_service = LangChainService()
                 
+                # Create an enhanced message list with context
+                enhanced_messages = []
+                
+                # Add a system message with context
+                if user_info or conversation_context:
+                    context_parts = []
+                    
+                    if user_info and "name" in user_info:
+                        context_parts.append(f"Customer name: {user_info['name']}")
+                    
+                    if conversation_context:
+                        context_parts.append(f"Recent conversation: {conversation_context}")
+                    
+                    enhanced_system_msg = ChatMessage(
+                        role="system",
+                        content=f"Context: {' | '.join(context_parts)}\nBe personalized and reference context appropriately."
+                    )
+                    enhanced_messages.append(enhanced_system_msg)
+                
+                # Add original messages
+                enhanced_messages.extend(messages)
+                
                 ai_response = await langchain_service.generate_response(
                     service_category=service_category,
-                    messages=messages
+                    messages=enhanced_messages
                 )
                 
-                # If we know the user's name, ensure it's used in the response
+                # Ensure personalization in non-product responses
                 if user_info and "name" in user_info and user_info["name"]:
                     name = user_info["name"]
-                    # Check if the name is already used in the response
-                    if name not in ai_response:
-                        # Add name to the beginning or end based on response
-                        if ai_response.startswith("Hello") or ai_response.startswith("Hi"):
-                            ai_response = ai_response.replace("Hello", f"Hello {name}", 1)
-                            ai_response = ai_response.replace("Hi", f"Hi {name}", 1)
+                    if name.lower() not in ai_response.lower():
+                        # Add name appropriately
+                        if not any(ai_response.startswith(greeting) for greeting in ["Hello", "Hi", "Good"]):
+                            ai_response = f"Hi {name}, " + ai_response
                         else:
-                            # Add to the end if not already there
-                            if not ai_response.endswith("?"):
-                                ai_response += f" Is there anything else I can help you with, {name}?"
+                            for greeting in ["Hello", "Hi"]:
+                                if ai_response.startswith(greeting):
+                                    ai_response = ai_response.replace(greeting, f"{greeting} {name}", 1)
+                                    break
                 
                 return {
                     "response": ai_response,
-                    "sources": []  # No document sources for non-product questions
+                    "sources": []
                 }
                 
         except Exception as e:
@@ -517,34 +346,122 @@ class DocumentBasedAIService:
             raise
 
 
-# For standalone testing
-if __name__ == "__main__":
-    import asyncio
+# Import the DocumentProcessor class from your existing code
+class DocumentProcessor:
+    """Processes PDF documents, creates embeddings, and builds a searchable vector store."""
     
-    async def test_product_qa():
-        # Initialize document processor
-        doc_processor = DocumentProcessor()
-        doc_processor.setup()
+    def __init__(self, documents_base_path: str = "data/products"):
+        """Initialize the document processor."""
+        self.documents_base_path = documents_base_path
+        self.categories = ["sme", "retail", "corporate", "institutional", "agribusiness"]
+        self.embeddings = OpenAIEmbeddings(openai_api_key=settings.OPENAI_API_KEY)
+        self.vector_store = None
         
-        # Initialize product QA service
-        product_qa = ProductQAService(doc_processor)
-        
-        # Test product question without user info
-        question = "What are the requirements for an SME loan?"
-        result = await product_qa.answer_product_question(question)
-        
-        print(f"Question: {question}")
-        print(f"Answer: {result['answer']}")
-        print("Sources:")
-        for source in result["sources"]:
-            print(f"  - {source['product']} ({source['category']}) - {source['file']} (Page {source['page']})")
-        
-        # Test with user info
-        user_info = {"name": "John", "account_number": "12345678"}
-        result_with_name = await product_qa.answer_product_question(question, user_info)
-        
-        print("\nQuestion with user info: " + question)
-        print(f"Personalized Answer: {result_with_name['answer']}")
+        logger.info(f"Document processor initialized with base path: {documents_base_path}")
     
-    # Run test
-    asyncio.run(test_product_qa())
+    def load_documents(self) -> List[Dict[str, Any]]:
+        """Load all PDF documents from the product categories."""
+        all_documents = []
+        
+        for category in self.categories:
+            category_path = os.path.join(self.documents_base_path, category)
+            
+            if not os.path.exists(category_path):
+                logger.warning(f"Category path does not exist: {category_path}")
+                continue
+            
+            logger.info(f"Loading documents from {category_path}")
+            
+            loader = DirectoryLoader(
+                category_path,
+                glob="**/*.pdf",
+                loader_cls=PyPDFLoader
+            )
+            
+            try:
+                category_docs = loader.load()
+                
+                for doc in category_docs:
+                    filename = os.path.basename(doc.metadata.get("source", "unknown"))
+                    doc.metadata.update({
+                        "category": category,
+                        "filename": filename,
+                        "product_type": self._extract_product_type(filename)
+                    })
+                
+                all_documents.extend(category_docs)
+                logger.info(f"Loaded {len(category_docs)} documents from {category}")
+                
+            except Exception as e:
+                logger.error(f"Error loading documents from {category}: {e}")
+        
+        logger.info(f"Total documents loaded: {len(all_documents)}")
+        return all_documents
+    
+    def _extract_product_type(self, filename: str) -> str:
+        """Extract product type from filename."""
+        name = os.path.splitext(filename)[0]
+        return name.replace("_", " ").title()
+    
+    def process_documents(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Process documents by splitting into chunks."""
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1500,
+            chunk_overlap=300,
+            separators=["\n\n", "\n", ". ", " ", ""]
+        )
+        
+        document_chunks = text_splitter.split_documents(documents)
+        
+        logger.info(f"Created {len(document_chunks)} document chunks from {len(documents)} documents")
+        return document_chunks
+    
+    def create_vector_store(self, document_chunks: List[Dict[str, Any]]) -> None:
+        """Create a vector store from document chunks."""
+        self.vector_store = Chroma.from_documents(
+            documents=document_chunks,
+            embedding=self.embeddings,
+            persist_directory=os.path.join(self.documents_base_path, "chroma_db")
+        )
+        
+        try:
+            self.vector_store.persist()
+        except:
+            logger.info("Vector store auto-persisted")
+        
+        logger.info(f"Created vector store with {len(document_chunks)} document chunks")
+    
+    def load_vector_store(self) -> bool:
+        """Load an existing vector store if available."""
+        persist_directory = os.path.join(self.documents_base_path, "chroma_db")
+        
+        if os.path.exists(persist_directory):
+            try:
+                self.vector_store = Chroma(
+                    persist_directory=persist_directory,
+                    embedding_function=self.embeddings
+                )
+                logger.info(f"Loaded existing vector store from {persist_directory}")
+                return True
+            except Exception as e:
+                logger.error(f"Error loading vector store: {e}")
+        
+        logger.warning("No existing vector store found")
+        return False
+    
+    def setup(self) -> None:
+        """Set up the document processor by loading or creating a vector store."""
+        if not self.load_vector_store():
+            documents = self.load_documents()
+            document_chunks = self.process_documents(documents)
+            self.create_vector_store(document_chunks)
+    
+    def get_retriever(self):
+        """Get a retriever for the vector store."""
+        if not self.vector_store:
+            raise ValueError("Vector store not initialized. Call setup() first.")
+        
+        return self.vector_store.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 7}
+        )
